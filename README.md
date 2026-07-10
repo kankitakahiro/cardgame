@@ -1,6 +1,7 @@
 # Card Game (Unreal Engine)
 
 Unreal Engineでカードゲームを開発するための初期リポジトリです。
+アンリアルエンジンでカードゲームを作ります。
 
 ## 前提
 - Windows
