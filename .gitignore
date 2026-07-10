@@ -1,0 +1,28 @@
+# Unreal Engine
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+.vs/
+
+# Rider/Visual Studio
+*.VC.db
+*.VC.opendb
+*.sln
+*.suo
+*.opensdf
+*.sdf
+*.pdb
+
+# Build artifacts
+Build/*
+!Build/**/*.ini
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+*.tmp
+*.log
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
