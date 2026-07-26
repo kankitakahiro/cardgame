@@ -9,7 +9,7 @@ Unreal Engineでカードゲームを開発するための初期リポジトリ�
 - Git LFS
 - Unreal Engine 5.x
 
-このPCでは `UE_5.3` が検出されています。
+このPCでは `UE_5.8` が検出されています。
 
 ## 初回セットアップ
 1. Git LFSを有効化
@@ -30,7 +30,8 @@ Unreal Engineでカードゲームを開発するための初期リポジトリ�
    - `git push -u origin main`
 
 ## Unrealプロジェクト作成のおすすめ
-1. Epic Games Launcherから Unreal Engine 5.3 を起動
+1. Epic Games Launcherから Unreal Engine 5.8 を起動
+1. Epic Games Launcherから Unreal Engine 5.8 を起動
 2. New Project を選択
 3. 保存先をこのフォルダ配下に設定（例: `CardGame/`）
 4. プロジェクト作成後、このリポジトリで `git status` を確認
