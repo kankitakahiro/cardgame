@@ -54,9 +54,7 @@ Unreal Engineでカードゲームを開発するための初期リポジトリ�
 - `feature/*`: 機能開発
 
 ## 設計ドキュメント
-- `docs/development-plan.md`
-- `docs/blueprint-architecture.md`
-- `docs/game-rules-minimum.md`
+- `docs/work-instruction.md`
 
 ## 注意
 - `.uasset` / `.umap` はGit LFSで管理します。
