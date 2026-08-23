@@ -15,7 +15,7 @@ for asset_name, package_path in WIDGETS:
         unreal.log_warning(f'{asset_name} already exists')
         continue
 
-    blueprint = asset_tools.create_asset(asset_name, package_path, unreal.Blueprint, factory)
+    blueprint = asset_tools.create_asset(asset_name, package_path, unreal.WidgetBlueprint, factory)
     if not blueprint:
         raise RuntimeError(f'Failed to create {asset_name}')
 
