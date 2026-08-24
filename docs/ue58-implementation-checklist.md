@@ -45,3 +45,16 @@ Unreal Engine 5.8 上で、カードゲームの初期プレイアブル版を�
 ## 補足
 - Blueprint作成後は、テンプレート由来の FirstPerson 系アセットを減らしていく。
 - 重い処理は後から C++ に切り出す。
+
+## 進捗メモ(2026-08-24時点)
+- Map / BP_CG_GameMode・GameState・PlayerState / Widget3種(Hand/Board/Market) / カード
+  データ24枚: 作成済み。
+- **ゲームループはBlueprintのイベントグラフではなく、C++(`CardGame/Source/CardGame/`)で
+  実装済み**。Unreal 5.8のPython Editor Scripting APIがBlueprintグラフへのノード追加・
+  配線を公開していないため(詳細: [automation-notes.md](automation-notes.md))、
+  `BP_CG_GameMode`/`GameState`/`PlayerState`はC++クラス(`CGGameMode`/`CGGameState`/
+  `CGPlayerState`)を親に持つ薄いBlueprintになっている。
+- `-game`スタンドアロン実行での動作確認済み(初期化・ターン開始まで)。
+- 未実装: `play/buy/attack/end`をUIボタンから呼び出す配線(WidgetTreeもPythonから
+  編集不可のため、UMGエディタ上での手動配置が必要)。カード固有効果(24枚中、基本3効果
+  以外)は`TODO_`接頭辞のデータのみで未実装。

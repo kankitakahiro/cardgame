@@ -47,6 +47,59 @@ Python公開範囲が「アセット/変数/関数グラフの器」までで、
    (Blueprint中心方針に最も忠実)。
 2. **C++移行**: ゲームループ部分をC++で実装し、Blueprintからは呼び出すだけにする
    (Sourceモジュール新設・ビルド環境が必要。方針転換になるため要合意)。
+   → **2026-08-23〜24に実施済み**。詳細は下記「C++移行の実施記録」を参照。
 3. **DataTable運用は`DT_CG_Cards`ではなく`BP_CG_CardDefinition`派生の
    `DA_CG_C001`〜`C024`で代替**(`UserDefinedStruct`のフィールド編集APIも
    非公開のため)。
+   → C++移行後は `UCGCardDatabase`(`Source/CardGame/CGCardDatabase.cpp`)の
+   静的データが正データ。`DA_CG_C001`〜`C024`は参考用に残置。
+
+## C++移行の実施記録(2026-08-23〜24)
+
+### ビルド環境
+- このマシンには元々Visual Studioが未インストールだった。
+  `winget install --id Microsoft.VisualStudio.2022.Community --override "--add
+  Microsoft.VisualStudio.Workload.NativeGame --add
+  Microsoft.VisualStudio.Workload.ManagedDesktop --includeRecommended --quiet --wait"`
+  で導入(ワークロードが反映されない場合は `vs_installer.exe modify` で個別に追加)。
+- 物理メモリ15.8GBと少なめのため、デフォルトの並列ビルド(3並列)では
+  `cl.exe`が内部コンパイラエラー(C1001)でクラッシュした。
+  `Build.bat ... -MaxParallelActions=1` で1並列にしたところ安定してビルドできた。
+  **今後このマシンでC++をビルドする際は必ず `-MaxParallelActions=1` を付けること。**
+- `Target.cs`の`DefaultBuildSettings`は`V5`ではなく`BuildSettingsVersion.Latest`を
+  使うこと(UE5.8の既定値と食い違うと`UnrealEditor`と警告レベル設定が衝突しビルド
+  不能になる)。
+
+### 実装構成
+- `CardGame/Source/CardGame/` にモジュール新設。`CardGame.uproject`に`Modules`追加。
+- `CGTypes.h`: `ECGCardType` / `ECGPhase` / `FCGCardDef`
+- `CGCardDatabase.h/.cpp`: 24枚のカードマスタ(静的データ)、初期デッキ12枚取得
+- `CGPlayerState.h/.cpp`: 片側プレイヤーのHP/マナ/手札/デッキ/場。ドロー・プレイ・
+  購入・攻撃・死亡処理・基本3効果(単体ダメージ/単体回復/死亡時ドロー)を実装
+- `CGGameState.h/.cpp`: ターン/フェーズ/勝者/マーケット公開状態
+- `CGGameMode.h/.cpp`: 試合初期化、ターン進行、Play/Buy/Attack/EndTurnの受付、
+  勝敗判定。`LogCardGame`カテゴリでログ出力
+
+### Blueprintとの接続
+- `BP_CG_GameMode` / `BP_CG_GameState` / `BP_CG_PlayerState` は削除して、
+  C++クラス(`CGGameMode`/`CGGameState`/`CGPlayerState`)を親に再作成した
+  (`scripts/step6_recreate_core_blueprints.py`)。
+  Python版`add_member_variable`で追加していた同名の動的変数を残したまま
+  reparentすると名前衝突のリスクがあるため、削除→再作成を選んだ。
+- `EditorAssetLibrary.delete_asset`はアセットレジストリ上は消えても
+  物理ファイルが残ることがある(unattended実行では上書き不可でエラーになる)。
+  再作成前に `.uasset` を直接ファイル削除するのが確実。
+- `BP_CG_GameMode`のCDOに対して`GameStateClass`/`PlayerStateClass`を
+  `BP_CG_GameState`/`BP_CG_PlayerState`に設定済み(C++既定クラスではなく
+  Blueprint版を使う。将来Blueprint側で拡張できるように)。
+
+### 動作確認
+`-game`スタンドアロン実行(`UnrealEditor.exe <uproject> -game -windowed -log`)で
+実際に対戦初期化〜ターン開始まで走ることを確認済み(ログ例):
+```
+LogCardGame: InitializeMatch: Sides=2 Side0 HP=20 Hand=5 Deck=7 / Side1 HP=20 Hand=5 Deck=7 / Market=5 FirstPlayer=1
+LogCardGame: StartTurn: TurnCount=1 ActiveSide=1 Mana=1/1 HandSize=6
+```
+Play/Buy/Attack/EndTurnの各`Request*`関数はUI(ボタン等)からの呼び出しが
+必要だが、UMG WidgetTreeがPythonから編集できない制約(前述)のため、
+ボタン配置とOnClickedからの関数呼び出しはUnrealエディタ上で手動作業が必要。
