@@ -103,3 +103,27 @@ LogCardGame: StartTurn: TurnCount=1 ActiveSide=1 Mana=1/1 HandSize=6
 Play/Buy/Attack/EndTurnの各`Request*`関数はUI(ボタン等)からの呼び出しが
 必要だが、UMG WidgetTreeがPythonから編集できない制約(前述)のため、
 ボタン配置とOnClickedからの関数呼び出しはUnrealエディタ上で手動作業が必要。
+
+### 追記: UIボタンの配線はC++なら自動化できる(2026-08-25)
+
+上記の制約は「Python Editor Scripting API」から見たBlueprintグラフ編集の話であり、
+**C++コードそのものには及ばない**。UMGの`WidgetTree`はC++からは通常のUPROPERTYと
+して直接アクセス可能(protectedはPython reflection側のガードであり、C++の派生
+クラスからは通常のアクセス指定子どおりアクセスできる)。
+
+これを利用し、UI一式(`CGCardSlotWidget` / `CGGameHUD`)を完全にC++の
+`NativeConstruct()`で構築し、ボタンクリックも`OnClicked.AddDynamic(...)`で
+C++関数に直接バインドする方式で実装した。WidgetBlueprintアセット(`WBP_CG_*`)
+を経由せず、`ACGGameMode::BeginPlay`から`CreateWidget<UCGGameHUD>(...)`で
+直接生成・`AddToViewport()`している。
+
+- `-game`スタンドアロン実行で、ログ上は
+  `NativeConstruct built widget tree` → `RefreshUI ... Sides=2` →
+  `HUD created and added to viewport` まで全て正常に完了することを確認済み。
+- **視覚的なスクリーンショット確認は本セッションの自動化環境では失敗した**
+  (BitBlt/PrintWindow(PW_RENDERFULLCONTENT)のどちらもDX11/DX12問わず黒画面、
+  SendKeysでのコンソールコマンド(`Shot`)もウィンドウにフォーカスが渡らず
+  実行されなかった)。これはWindowsのフォアグラウンドロックやリモート
+  セッションでのGPU画面キャプチャの既知の制約によるものと推測され、
+  ログで確認できるコード側の動作(ウィジェット構築・ビューポート追加・
+  ゲーム状態反映)には問題が見られない。実機での目視確認を推奨する。

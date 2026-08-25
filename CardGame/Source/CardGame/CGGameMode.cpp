@@ -2,8 +2,11 @@
 #include "CGGameState.h"
 #include "CGPlayerState.h"
 #include "CGCardDatabase.h"
+#include "CGGameHUD.h"
 #include "CardGame.h"
 #include "Engine/World.h"
+#include "Kismet/GameplayStatics.h"
+#include "GameFramework/PlayerController.h"
 
 ACGGameMode::ACGGameMode()
 {
@@ -11,12 +14,34 @@ ACGGameMode::ACGGameMode()
 	// BP_CG_GameState / BP_CG_PlayerState を指すよう上書き設定される。
 	GameStateClass = ACGGameState::StaticClass();
 	PlayerStateClass = ACGPlayerState::StaticClass();
+
+	// 3Dの操作対象を持たないUI主体のカードゲームのため、デフォルトPawnは不要。
+	DefaultPawnClass = nullptr;
 }
 
 void ACGGameMode::BeginPlay()
 {
 	Super::BeginPlay();
 	InitializeMatch();
+
+	if (APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0))
+	{
+		if (UCGGameHUD* HUD = CreateWidget<UCGGameHUD>(PC, UCGGameHUD::StaticClass()))
+		{
+			HUD->AddToViewport();
+			PC->bShowMouseCursor = true;
+			PC->SetInputMode(FInputModeUIOnly());
+			UE_LOG(LogCardGame, Log, TEXT("HUD created and added to viewport for PC=%s"), *PC->GetName());
+		}
+		else
+		{
+			UE_LOG(LogCardGame, Error, TEXT("CreateWidget<UCGGameHUD> failed"));
+		}
+	}
+	else
+	{
+		UE_LOG(LogCardGame, Error, TEXT("No PlayerController(0) found at BeginPlay time"));
+	}
 }
 
 ACGGameState* ACGGameMode::GetCGGameState() const
