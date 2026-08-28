@@ -8,6 +8,7 @@
 #include "Components/HorizontalBox.h"
 #include "Components/VerticalBox.h"
 #include "Components/Button.h"
+#include "Components/Border.h"
 #include "Blueprint/WidgetTree.h"
 #include "CardGame.h"
 
@@ -27,8 +28,13 @@ void UCGGameHUD::NativeConstruct()
 {
 	Super::NativeConstruct();
 
+	// DIAG: 全画面の赤いBorderを最背面に敷いて、UMGの描画自体が出るか切り分ける。
+	UBorder* DiagBorder = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("DiagRedBorder"));
+	DiagBorder->SetBrushColor(FLinearColor(1.f, 0.f, 0.f, 1.f));
+	WidgetTree->RootWidget = DiagBorder;
+
 	UVerticalBox* Root = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("HUDRoot"));
-	WidgetTree->RootWidget = Root;
+	DiagBorder->AddChild(Root);
 
 	StatusText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("StatusText"));
 	Root->AddChildToVerticalBox(StatusText);

@@ -7,6 +7,7 @@
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/PlayerController.h"
+#include "TimerManager.h"
 
 ACGGameMode::ACGGameMode()
 {
@@ -22,26 +23,40 @@ ACGGameMode::ACGGameMode()
 void ACGGameMode::BeginPlay()
 {
 	Super::BeginPlay();
+
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 30.f, FColor::Yellow, TEXT("HELLO CARDGAME - Canvas debug text test"));
+	}
+
 	InitializeMatch();
 
-	if (APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0))
+	// BeginPlay時点だとローカルプレイヤーのビューポートがまだ準備できておらず
+	// AddToViewport()が画面に反映されないことがあるため、1フレーム遅延させる。
+	GetWorldTimerManager().SetTimerForNextTick(this, &ACGGameMode::SetupHUD);
+}
+
+void ACGGameMode::SetupHUD()
+{
+	APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0);
+	if (!PC)
 	{
-		if (UCGGameHUD* HUD = CreateWidget<UCGGameHUD>(PC, UCGGameHUD::StaticClass()))
-		{
-			HUD->AddToViewport();
-			PC->bShowMouseCursor = true;
-			PC->SetInputMode(FInputModeUIOnly());
-			UE_LOG(LogCardGame, Log, TEXT("HUD created and added to viewport for PC=%s"), *PC->GetName());
-		}
-		else
-		{
-			UE_LOG(LogCardGame, Error, TEXT("CreateWidget<UCGGameHUD> failed"));
-		}
+		UE_LOG(LogCardGame, Error, TEXT("SetupHUD: No PlayerController(0) found"));
+		return;
 	}
-	else
+
+	UCGGameHUD* HUD = CreateWidget<UCGGameHUD>(PC, UCGGameHUD::StaticClass());
+	if (!HUD)
 	{
-		UE_LOG(LogCardGame, Error, TEXT("No PlayerController(0) found at BeginPlay time"));
+		UE_LOG(LogCardGame, Error, TEXT("SetupHUD: CreateWidget<UCGGameHUD> failed"));
+		return;
 	}
+
+	HUD->AddToViewport();
+	PC->bShowMouseCursor = true;
+	PC->SetInputMode(FInputModeUIOnly());
+	UE_LOG(LogCardGame, Log, TEXT("SetupHUD: HUD created and added to viewport for PC=%s IsInViewport=%d"),
+		*PC->GetName(), HUD->IsInViewport() ? 1 : 0);
 }
 
 ACGGameState* ACGGameMode::GetCGGameState() const

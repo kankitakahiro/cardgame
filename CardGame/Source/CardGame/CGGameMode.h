@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
+#include "Engine/TimerHandle.h"
 #include "CGGameMode.generated.h"
 
 class ACGGameState;
@@ -54,4 +55,11 @@ public:
 protected:
 	void CheckWinLose();
 	ACGPlayerState* GetOpponent(int32 SideIndex) const;
+
+	// GameMode::BeginPlay時点ではローカルプレイヤーのビューポートがまだ描画準備完了
+	// していないことがあり、その場でAddToViewport()しても画面に反映されないことがある。
+	// そのため1フレーム遅延させてHUDを生成する。
+	void SetupHUD();
+
+	FTimerHandle HUDSetupTimerHandle;
 };
