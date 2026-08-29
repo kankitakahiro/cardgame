@@ -24,17 +24,29 @@ namespace
 	}
 }
 
+TSharedRef<SWidget> UCGGameHUD::RebuildWidget()
+{
+	EnsureWidgetTreeBuilt();
+	return Super::RebuildWidget();
+}
+
 void UCGGameHUD::NativeConstruct()
 {
 	Super::NativeConstruct();
+	EnsureWidgetTreeBuilt();
+	RefreshUI();
+}
 
-	// DIAG: 全画面の赤いBorderを最背面に敷いて、UMGの描画自体が出るか切り分ける。
-	UBorder* DiagBorder = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("DiagRedBorder"));
-	DiagBorder->SetBrushColor(FLinearColor(1.f, 0.f, 0.f, 1.f));
-	WidgetTree->RootWidget = DiagBorder;
+void UCGGameHUD::EnsureWidgetTreeBuilt()
+{
+	if (bWidgetTreeBuilt)
+	{
+		return;
+	}
+	bWidgetTreeBuilt = true;
 
 	UVerticalBox* Root = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("HUDRoot"));
-	DiagBorder->AddChild(Root);
+	WidgetTree->RootWidget = Root;
 
 	StatusText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("StatusText"));
 	Root->AddChildToVerticalBox(StatusText);
@@ -58,10 +70,8 @@ void UCGGameHUD::NativeConstruct()
 	EndTurnButton->OnClicked.AddDynamic(this, &UCGGameHUD::HandleEndTurnClicked);
 	Root->AddChildToVerticalBox(EndTurnButton);
 
-	UE_LOG(LogCardGame, Log, TEXT("UCGGameHUD::NativeConstruct built widget tree, RootWidget=%s"),
+	UE_LOG(LogCardGame, Log, TEXT("UCGGameHUD::EnsureWidgetTreeBuilt RootWidget=%s"),
 		WidgetTree->RootWidget ? *WidgetTree->RootWidget->GetName() : TEXT("null"));
-
-	RefreshUI();
 }
 
 ACGGameMode* UCGGameHUD::GetCGGameMode() const

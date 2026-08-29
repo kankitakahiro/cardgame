@@ -11,19 +11,27 @@ class ACGGameMode;
 
 // ゲーム全体のHUD。マーケット/両陣営の場/手札/ステータス/EndTurnボタンを持つ。
 // WidgetBlueprintのWidgetTreeをPythonから編集できない制約(docs/automation-notes.md)
-// のため、UIは全てC++側(NativeConstruct)で構築している。
+// のため、UIは全てC++側で構築している。
 UCLASS()
 class UCGGameHUD : public UUserWidget
 {
 	GENERATED_BODY()
 
 public:
-	virtual void NativeConstruct() override;
-
 	UFUNCTION(BlueprintCallable, Category = "CardGame")
 	void RefreshUI();
 
 protected:
+	// WidgetTree->RootWidgetは NativeConstruct() ではなく RebuildWidget() の中で
+	// 設定しないと、Slate側が先に空のプレースホルダー(SSpacer)を取得してキャッシュ
+	// してしまい、後からRootWidgetを設定しても画面に反映されない
+	// (Widget Reflectorで実際に確認した既知の落とし穴。docs/automation-notes.md参照)。
+	virtual TSharedRef<SWidget> RebuildWidget() override;
+	virtual void NativeConstruct() override;
+
+	void EnsureWidgetTreeBuilt();
+	bool bWidgetTreeBuilt = false;
+
 	UPROPERTY()
 	TObjectPtr<UTextBlock> StatusText;
 

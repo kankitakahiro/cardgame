@@ -24,11 +24,18 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "CardGame")
 	FCGOnSlotClicked OnSlotClicked;
 
-	virtual void NativeConstruct() override;
-
 	void SetLabel(const FString& InText);
 
 protected:
+	// WidgetTree->RootWidgetは NativeConstruct() ではなく RebuildWidget() の中で
+	// 設定しないと、Slate側が先に空のプレースホルダー(SSpacer)を取得してキャッシュ
+	// してしまい、後からRootWidgetを設定しても画面に反映されない
+	// (Widget Reflectorで実際に確認した既知の落とし穴。docs/automation-notes.md参照)。
+	virtual TSharedRef<SWidget> RebuildWidget() override;
+	virtual void NativeConstruct() override;
+
+	void EnsureBuilt();
+
 	UPROPERTY()
 	TObjectPtr<UButton> Button;
 

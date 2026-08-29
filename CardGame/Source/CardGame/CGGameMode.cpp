@@ -24,11 +24,6 @@ void ACGGameMode::BeginPlay()
 {
 	Super::BeginPlay();
 
-	if (GEngine)
-	{
-		GEngine->AddOnScreenDebugMessage(-1, 30.f, FColor::Yellow, TEXT("HELLO CARDGAME - Canvas debug text test"));
-	}
-
 	InitializeMatch();
 
 	// BeginPlay時点だとローカルプレイヤーのビューポートがまだ準備できておらず

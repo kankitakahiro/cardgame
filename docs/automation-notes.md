@@ -120,10 +120,37 @@ C++関数に直接バインドする方式で実装した。WidgetBlueprintア�
 - `-game`スタンドアロン実行で、ログ上は
   `NativeConstruct built widget tree` → `RefreshUI ... Sides=2` →
   `HUD created and added to viewport` まで全て正常に完了することを確認済み。
-- **視覚的なスクリーンショット確認は本セッションの自動化環境では失敗した**
-  (BitBlt/PrintWindow(PW_RENDERFULLCONTENT)のどちらもDX11/DX12問わず黒画面、
-  SendKeysでのコンソールコマンド(`Shot`)もウィンドウにフォーカスが渡らず
-  実行されなかった)。これはWindowsのフォアグラウンドロックやリモート
-  セッションでのGPU画面キャプチャの既知の制約によるものと推測され、
-  ログで確認できるコード側の動作(ウィジェット構築・ビューポート追加・
-  ゲーム状態反映)には問題が見られない。実機での目視確認を推奨する。
+- 当初「黒画面はスクリーンショット手法の環境制約」と誤って判断したが、
+  **ユーザー自身がPIEで確認しても同じ黒画面**が再現したため、実際のレンダリング
+  バグだと判明(詳細は下記「UMG黒画面の根本原因」)。
+
+## UMG黒画面の根本原因(2026-08-26〜29、解決済み)
+
+`Widget Reflector`(`ウィンドウ → 開発者ツール`から検索で見つからない場合は、
+PIE中にゲーム画面をクリックしてフォーカス→コンソールキー(`` ` ``)→
+`WidgetReflector`コマンドで起動できる)でPIEの実ウィジェット階層を確認したところ、
+`SObjectWidget (CGGameHUD_0)` の中身が **`SSpacer`**(空のプレースホルダー)に
+なっていることが判明した。
+
+原因: `WidgetTree->RootWidget` を **`NativeConstruct()`** の中で設定していたが、
+Slate側の `TakeWidget()` は **初回呼び出し時に `RebuildWidget()` を呼んで結果を
+キャッシュする**。何らかの理由で `RootWidget` 未設定のうちに最初の `TakeWidget()`
+が走ってしまうと、以降ずっと空の `SSpacer` が使われ続け、後から `RootWidget` を
+設定しても一切反映されない。
+
+**修正**: ウィジェット階層の構築を `NativeConstruct()` からではなく、
+**`RebuildWidget()` のオーバーライド内**(`Super::RebuildWidget()` を呼ぶ前)で
+行うようにした(`UCGGameHUD` / `UCGCardSlotWidget` 共通)。二重構築を避けるため
+`bWidgetTreeBuilt` フラグ(または `Button` の非null チェック)で1回だけ実行する
+`EnsureWidgetTreeBuilt()` / `EnsureBuilt()` にまとめ、`RebuildWidget()` と
+`NativeConstruct()` の両方から呼ぶ形にしている。
+
+同様の理由で、`UCGCardSlotWidget::SetLabel()` を「`CreateWidget()`した直後、
+まだ一度も`TakeWidget()`が走っていない(=`Button`/`Label`が未構築の)」タイミングで
+呼ぶと `Label` が null のまま無視されるため、`SetLabel()` の先頭でも
+`EnsureBuilt()` を呼ぶよう防御的に修正した。
+
+**教訓**: C++のみでUMGウィジェットを組み立てる場合、`NativeConstruct()` は
+「ウィジェットツリーが既に存在すること」を前提にしたロジック(データ反映や
+イベント購読など)を書く場所であり、**ツリーそのものの構築は
+`RebuildWidget()` で行うべき**。
