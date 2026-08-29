@@ -46,15 +46,22 @@ Unreal Engine 5.8 上で、カードゲームの初期プレイアブル版を�
 - Blueprint作成後は、テンプレート由来の FirstPerson 系アセットを減らしていく。
 - 重い処理は後から C++ に切り出す。
 
-## 進捗メモ(2026-08-24時点)
-- Map / BP_CG_GameMode・GameState・PlayerState / Widget3種(Hand/Board/Market) / カード
-  データ24枚: 作成済み。
-- **ゲームループはBlueprintのイベントグラフではなく、C++(`CardGame/Source/CardGame/`)で
-  実装済み**。Unreal 5.8のPython Editor Scripting APIがBlueprintグラフへのノード追加・
-  配線を公開していないため(詳細: [automation-notes.md](automation-notes.md))、
-  `BP_CG_GameMode`/`GameState`/`PlayerState`はC++クラス(`CGGameMode`/`CGGameState`/
-  `CGPlayerState`)を親に持つ薄いBlueprintになっている。
-- `-game`スタンドアロン実行での動作確認済み(初期化・ターン開始まで)。
-- 未実装: `play/buy/attack/end`をUIボタンから呼び出す配線(WidgetTreeもPythonから
-  編集不可のため、UMGエディタ上での手動配置が必要)。カード固有効果(24枚中、基本3効果
-  以外)は`TODO_`接頭辞のデータのみで未実装。
+## 進捗メモ(2026-08-29時点)
+- Map / BP_CG_GameMode・GameState・PlayerState / カードデータ24枚: 作成済み。
+- **ゲームループ・UIともにBlueprintのイベントグラフではなく、C++
+  (`CardGame/Source/CardGame/`)で実装済み**。Unreal 5.8のPython Editor Scripting
+  APIがBlueprintグラフへのノード追加・配線もUMG WidgetTreeの編集も公開していない
+  ため(詳細: [automation-notes.md](automation-notes.md))、`BP_CG_GameMode`/
+  `GameState`/`PlayerState`はC++クラス(`CGGameMode`/`CGGameState`/`CGPlayerState`)
+  を親に持つ薄いBlueprintになっている。UIは`WBP_CG_*`アセットを使わず、
+  `UCGGameHUD`/`UCGCardSlotWidget`というC++の`UUserWidget`派生クラスが
+  `NativeConstruct`ではなく`RebuildWidget`内でウィジェット階層を組み立て、
+  `ACGGameMode::BeginPlay`から`AddToViewport`で直接表示している。
+- **`play/buy/attack/end`のUIボタンから実際に操作できることを、ユーザー自身の
+  PIE確認で検証済み**(手札からのプレイ、マーケット購入判定、攻撃によるHP減少、
+  ターン交代とマナの個別増加、すべて正常動作)。「最低限の完成条件」は全て満たした。
+- カード固有効果(24枚中、基本3効果=単体ダメージ/単体回復/死亡時ドロー以外)は
+  `EffectId=TODO_*`のままデータのみで未実装。
+- `WBP_CG_HandWidget`/`BoardWidget`/`MarketWidget`(Content/CardGame/UI)は
+  Python自動化時代の名残で空の器のまま残っているが、実際のUIはC++の
+  `UCGGameHUD`が担っているため実質未使用。整理は今後の課題。
