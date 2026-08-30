@@ -26,6 +26,11 @@ public:
 
 	void SetLabel(const FString& InText);
 
+	// 行ごとに必要な情報量が違う(場のユニットは名前+ステータスだけ、マーケット/手札は
+	// 説明文まで必要)ため、ウィジェット構築前(SetLabelより前)に呼んでサイズを変えられる
+	// ようにしている。呼ばなければデフォルトサイズを使う。
+	void SetCardSize(float InWidth, float InHeight);
+
 protected:
 	// WidgetTree->RootWidgetは NativeConstruct() ではなく RebuildWidget() の中で
 	// 設定しないと、Slate側が先に空のプレースホルダー(SSpacer)を取得してキャッシュ
@@ -44,4 +49,8 @@ protected:
 
 	UFUNCTION()
 	void HandleClicked();
+
+private:
+	float CardWidth = 170.f;
+	float CardHeight = 190.f;
 };

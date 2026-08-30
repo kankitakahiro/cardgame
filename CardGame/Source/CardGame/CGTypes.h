@@ -46,6 +46,10 @@ struct FCGCardDef
 	UPROPERTY(BlueprintReadOnly, Category = "CardGame")
 	int32 Hp = 0;
 
+	// docs/initial-cards-v0.1.md の「効果概要」列そのまま。UI表示用。
+	UPROPERTY(BlueprintReadOnly, Category = "CardGame")
+	FString Description;
+
 	// 実装済みの基本効果("OnPlayDamageTarget" / "OnPlayHealSelf" / "OnDeathDraw")のみロジックが動く。
 	// それ以外は "TODO_" 接頭辞のデータのみで、効果は未実装(docs/initial-cards-v0.1.md参照)。
 	UPROPERTY(BlueprintReadOnly, Category = "CardGame")

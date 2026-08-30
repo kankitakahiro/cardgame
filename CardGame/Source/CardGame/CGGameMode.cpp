@@ -9,6 +9,12 @@
 #include "GameFramework/PlayerController.h"
 #include "TimerManager.h"
 
+namespace
+{
+	// Side 0が人間、Side 1が常にAI。一人二役をなくすため、対戦相手は自動で行動する。
+	constexpr int32 AISideIndex = 1;
+}
+
 ACGGameMode::ACGGameMode()
 {
 	// GameStateClass / PlayerStateClass は、Blueprint再生成スクリプト側で
@@ -147,6 +153,11 @@ void ACGGameMode::StartTurn()
 
 	CheckWinLose();
 	OnCardGameStateChanged();
+
+	if (CGState->WinnerPlayerIndex == -1 && CGState->CurrentTurnPlayerIndex == AISideIndex)
+	{
+		RunAITurn(AISideIndex);
+	}
 }
 
 ACGPlayerState* ACGGameMode::GetOpponent(int32 SideIndex) const
@@ -173,7 +184,7 @@ bool ACGGameMode::RequestPlayCard(int32 SideIndex, FName CardId, int32 TargetUni
 
 	ACGPlayerState* Side = CGState->Sides[SideIndex];
 	ACGPlayerState* Opponent = GetOpponent(SideIndex);
-	const bool bResult = Side && Side->PlayCardFromHand(CardId, Opponent, TargetUnitIndex);
+	const bool bResult = Side && Side->PlayCardFromHand(CardId, Opponent, TargetUnitIndex, CGState);
 
 	if (bResult)
 	{
@@ -295,8 +306,106 @@ void ACGGameMode::RequestEndTurn(int32 SideIndex)
 	}
 
 	CGState->CurrentPhase = ECGPhase::End;
+	if (CGState->Sides.IsValidIndex(SideIndex) && CGState->Sides[SideIndex])
+	{
+		CGState->Sides[SideIndex]->ResolveEndTurnEffects();
+	}
 	CGState->CurrentTurnPlayerIndex = (SideIndex == 0) ? 1 : 0;
 	StartTurn();
+}
+
+void ACGGameMode::RunAITurn(int32 SideIndex)
+{
+	ACGGameState* CGState = GetCGGameState();
+	ACGPlayerState* AISide = (CGState && CGState->Sides.IsValidIndex(SideIndex)) ? CGState->Sides[SideIndex] : nullptr;
+	if (!CGState || !AISide)
+	{
+		return;
+	}
+
+	// 購入: 使えるマナがある限り、買えるカードの中で一番コストが高いものから買っていく。
+	// (RequestBuyCardが失敗した=想定外の理由で買えない場合は無限ループ回避のため打ち切る)
+	for (int32 SafetyCounter = 0; SafetyCounter < 30 && CGState->WinnerPlayerIndex == -1; ++SafetyCounter)
+	{
+		FName BestCardId = NAME_None;
+		int32 BestCost = -1;
+		for (const FName& MarketCardId : CGState->MarketCardIds)
+		{
+			FCGCardDef Def;
+			if (UCGCardDatabase::FindCard(MarketCardId, Def) && Def.Cost <= AISide->CurrentMana && Def.Cost > BestCost)
+			{
+				BestCost = Def.Cost;
+				BestCardId = MarketCardId;
+			}
+		}
+		if (BestCardId == NAME_None || !RequestBuyCard(SideIndex, BestCardId))
+		{
+			break;
+		}
+	}
+
+	// プレイ: 手札の中で一番コストが高い、出せるカードから順に出していく。
+	for (int32 SafetyCounter = 0; SafetyCounter < 30 && CGState->WinnerPlayerIndex == -1; ++SafetyCounter)
+	{
+		FName BestCardId = NAME_None;
+		int32 BestCost = -1;
+		for (const FName& HandCardId : AISide->HandCardIds)
+		{
+			FCGCardDef Def;
+			if (UCGCardDatabase::FindCard(HandCardId, Def) && Def.Cost <= AISide->CurrentMana && Def.Cost > BestCost)
+			{
+				BestCost = Def.Cost;
+				BestCardId = HandCardId;
+			}
+		}
+		if (BestCardId == NAME_None || !RequestPlayCard(SideIndex, BestCardId))
+		{
+			break;
+		}
+	}
+
+	// 攻撃: 攻撃可能なユニットで、相手に守護がいれば必ずそちらを、いなければ顔面を攻撃する
+	// (人間側のHandleBoardSlotClickedと同じ自動ターゲットルール)。
+	for (int32 SafetyCounter = 0; SafetyCounter < 30 && CGState->WinnerPlayerIndex == -1; ++SafetyCounter)
+	{
+		int32 AttackerUnitIndex = -1;
+		for (int32 i = 0; i < AISide->BoardUnitCanAttack.Num(); ++i)
+		{
+			if (AISide->BoardUnitCanAttack[i])
+			{
+				AttackerUnitIndex = i;
+				break;
+			}
+		}
+		if (AttackerUnitIndex == -1)
+		{
+			break;
+		}
+
+		ACGPlayerState* Defender = GetOpponent(SideIndex);
+		int32 TargetUnitIndex = -1;
+		if (Defender && Defender->HasGuardUnit())
+		{
+			for (int32 i = 0; i < Defender->BoardUnitHasGuard.Num(); ++i)
+			{
+				if (Defender->BoardUnitHasGuard[i])
+				{
+					TargetUnitIndex = i;
+					break;
+				}
+			}
+		}
+
+		if (!RequestAttack(SideIndex, AttackerUnitIndex, TargetUnitIndex))
+		{
+			break;
+		}
+	}
+
+	if (CGState->WinnerPlayerIndex == -1)
+	{
+		RequestEndTurn(SideIndex);
+	}
 }
 
 void ACGGameMode::CheckWinLose()

@@ -56,6 +56,11 @@ protected:
 	void CheckWinLose();
 	ACGPlayerState* GetOpponent(int32 SideIndex) const;
 
+	// Side 1は常にAI制御(一人二役の解消)。手番がSide 1になったStartTurnの終わりで
+	// 呼ばれ、購入→プレイ→攻撃→EndTurnまでを1回の呼び出し内で同期的に完結させる。
+	// これにより、HUDのRefreshUI()が呼ばれる頃には手番は必ず人間(Side 0)に戻っている。
+	void RunAITurn(int32 SideIndex);
+
 	// GameMode::BeginPlay時点ではローカルプレイヤーのビューポートがまだ描画準備完了
 	// していないことがあり、その場でAddToViewport()しても画面に反映されないことがある。
 	// そのため1フレーム遅延させてHUDを生成する。

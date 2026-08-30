@@ -8,6 +8,8 @@ class UTextBlock;
 class UHorizontalBox;
 class UButton;
 class ACGGameMode;
+class ACGGameState;
+class ACGPlayerState;
 
 // ゲーム全体のHUD。マーケット/両陣営の場/手札/ステータス/EndTurnボタンを持つ。
 // WidgetBlueprintのWidgetTreeをPythonから編集できない制約(docs/automation-notes.md)
@@ -32,8 +34,22 @@ protected:
 	void EnsureWidgetTreeBuilt();
 	bool bWidgetTreeBuilt = false;
 
+	// RefreshUI()の各行更新はほぼ同じ形(ClearChildren→カードごとにSlot作成→Add)を
+	// 繰り返すため、共通処理をここにまとめている。
+	void PopulateFaceDownHandRow(UHorizontalBox* Box, int32 CardCount);
+	void PopulateBoardRow(UHorizontalBox* Box, ACGPlayerState* Side, bool bIsSelfSide);
+	void PopulateCardRow(UHorizontalBox* Box, const TArray<FName>& CardIds, bool bIsMarketRow, FName ClickHandlerName);
+
+	// HandleXxxClickedの先頭で毎回繰り返していたGameMode/GameState取得+nullチェックの共通化。
+	bool TryGetGameModeAndState(ACGGameMode*& OutGameMode, ACGGameState*& OutCGState) const;
+
 	UPROPERTY()
 	TObjectPtr<UTextBlock> StatusText;
+
+	// 相手の手札は中身を見せず、枚数分の裏向きカードとして表示する
+	// (Shadowverse/MTG Arenaのような見せ方)。
+	UPROPERTY()
+	TObjectPtr<UHorizontalBox> EnemyHandBox;
 
 	UPROPERTY()
 	TObjectPtr<UHorizontalBox> MarketBox;
