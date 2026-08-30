@@ -9,8 +9,7 @@ class ACGGameState;
 class ACGPlayerState;
 class UCGAIOpponent;
 
-// 対戦進行の中核。docs/blueprint-architecture.md の BP_CG_GameMode に相当。
-// docs/ue58-implementation-checklist.md の「実装順」1〜9を満たす最小ゲームループを実装する。
+// 対戦進行の中核(docs/architecture.md「対戦ロジックのクラス責務」)。
 UCLASS()
 class ACGGameMode : public AGameModeBase
 {
@@ -58,7 +57,7 @@ protected:
 	ACGPlayerState* GetOpponent(int32 SideIndex) const;
 
 	// Side 1は常にAI制御(一人二役の解消)。意思決定ロジック自体はUCGAIOpponentへ
-	// 切り出してあり(docs/refactor-plan-architecture.md Step 4)、GameModeはそれを
+	// 切り出してあり(docs/architecture.md「対戦ロジックのクラス責務」)、GameModeはそれを
 	// 手番がSide 1になったStartTurnの終わりで呼ぶだけにしている。
 	UPROPERTY()
 	TObjectPtr<UCGAIOpponent> AIOpponent;

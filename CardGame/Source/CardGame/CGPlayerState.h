@@ -7,7 +7,7 @@
 
 class ACGGameState;
 
-// 1プレイヤー(片側)の対戦データ。docs/blueprint-architecture.md の BP_CG_PlayerState に相当。
+// 1プレイヤー(片側)の対戦データ(docs/architecture.md「対戦ロジックのクラス責務」)。
 // ローカル対戦プロトタイプのため、実際のネットワーク接続(PlayerController)とは独立に
 // ACGGameMode が2体を直接SpawnActorして「対戦相手」として扱う。
 UCLASS()
@@ -109,7 +109,7 @@ public:
 	void ResolveEndTurnEffects();
 
 	// 以下はカード効果ハンドラ(CGPlayerState.cpp 無名namespace内のHandle_*関数群、
-	// docs/refactor-plan-architecture.md Step 2参照)から呼ばれるための公開メンバー。
+	// docs/architecture.md「カード効果ディスパッチ」参照)から呼ばれるための公開メンバー。
 	// 外部からの直接呼び出しは想定していない。
 
 	// 手札からランダムに1枚選んで捨てる(捨てる枚数を指定する効果がまだ無いため、

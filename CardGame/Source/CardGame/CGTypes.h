@@ -50,6 +50,15 @@ struct FCGCardDef
 	UPROPERTY(BlueprintReadOnly, Category = "CardGame")
 	FString Description;
 
+	// 部族/系統(例: 人間、アンデッド等)。今後のシナジー要素での活用を見込んだ予約
+	// フィールドで、現状は一部のカードにサンプル値を入れているのみ(docs/architecture.md参照)。
+	UPROPERTY(BlueprintReadOnly, Category = "CardGame")
+	FString Tribe;
+
+	// カード下部に載せる短いフレーバーテキスト(世界観演出用)。現状は一部のカードのみ。
+	UPROPERTY(BlueprintReadOnly, Category = "CardGame")
+	FString FlavorText;
+
 	// 実装済みの基本効果("OnPlayDamageTarget" / "OnPlayHealSelf" / "OnDeathDraw")のみロジックが動く。
 	// それ以外は "TODO_" 接頭辞のデータのみで、効果は未実装(docs/initial-cards-v0.1.md参照)。
 	UPROPERTY(BlueprintReadOnly, Category = "CardGame")
@@ -77,7 +86,7 @@ struct FCGCardDef
 // BoardUnitCardIds/Atk/Hp/CanAttack/HasGuardという5本のパラレル配列で
 // 管理していたが、新しい状態(毒/バフ/沈黙等)を足すたびに配列が増えて
 // 同期が崩れやすかったため、1つの構造体にまとめている
-// (docs/refactor-plan-architecture.md Step 1参照)。
+// (docs/architecture.md「場のユニットの状態管理」参照)。
 USTRUCT(BlueprintType)
 struct FCGBoardUnit
 {
@@ -102,7 +111,7 @@ struct FCGBoardUnit
 // FCGCardDef::EffectId に入る値の一覧。以前は FName(TEXT("...")) のリテラルが
 // CGCardDatabase.cpp(カード定義)とCGPlayerState.cpp(効果ハンドラ登録)の両方に
 // 重複して散らばっており、タイポがあっても気付きにくかった。ここに集約することで
-// 両者が同じ定数を参照するようにする(docs/refactor-plan-architecture.md Step 3)。
+// 両者が同じ定数を参照するようにする(docs/architecture.md「カード効果ディスパッチ」参照)。
 namespace CGEffectId
 {
 	inline constexpr const TCHAR* None = TEXT("None");

@@ -83,7 +83,16 @@
 - C006: 登場時効果を「1ドロー」ではなく「山札上1枚確認」に変更
 - C024: 条件達成時3ダメージ -> 4ダメージ（ValuePoint 3.7、Ratio 0.62）
 
-## 実装メモ（Blueprint向け）
-- DataTable列候補: CardId, Name, Type, Cost, Atk, Hp, EffectId, Ratio, Tags
+## 実装メモ
+
+- 実データは `CardGame/Source/CardGame/CGCardDatabase.cpp` の `BuildAllCards()`
+  内、C++の静的配列(`MakeCard(CardId, Name, Type, Cost, Atk, Hp, EffectId,
+  EffectValue, Ratio, Tags, Description, Tribe, FlavorText)` 呼び出し1行=
+  カード1枚)が正データ。DataTable/DataAssetは使っていない
+  (経緯は[architecture.md](architecture.md)参照)。
 - Ratioは調整作業用の補助値として保持し、ゲームロジックの判定には直接使わない。
-- マーケット公開5枚は、マーケット山札から不足分を即補充する方式にする。
+- マーケット公開5枚は、マーケット山札から不足分を即補充する方式(実装済み、
+  `ACGGameState::RefillMarket()`)。
+- カード効果の実装方法(EffectIdからハンドラ関数への振り分け)、部族/カード
+  タイプを増やす際の拡張方法は [architecture.md](architecture.md) の
+  「今後の拡張ポイント」を参照。

@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
+#include "CGCardHostWidget.h"
 #include "CGGameHUD.generated.h"
 
 class UTextBlock;
@@ -13,9 +14,10 @@ class ACGPlayerState;
 
 // ゲーム全体のHUD。マーケット/両陣営の場/手札/ステータス/EndTurnボタンを持つ。
 // WidgetBlueprintのWidgetTreeをPythonから編集できない制約(docs/automation-notes.md)
-// のため、UIは全てC++側で構築している。
+// のため、UIは全てC++側で構築している。カードのホバー拡大プレビューは
+// UCGCardHostWidget側の共通実装を利用する(docs/architecture.md「ホバー拡大とZ順序」)。
 UCLASS()
-class UCGGameHUD : public UUserWidget
+class UCGGameHUD : public UCGCardHostWidget
 {
 	GENERATED_BODY()
 
@@ -66,6 +68,10 @@ protected:
 	UPROPERTY()
 	TObjectPtr<UButton> EndTurnButton;
 
+	// 勝敗確定後のみ表示する、ロビーへ戻るボタン(docs/architecture.md「レベルと画面遷移」)。
+	UPROPERTY()
+	TObjectPtr<UButton> BackToLobbyButton;
+
 	UFUNCTION()
 	void HandleHandSlotClicked(int32 SlotIndex);
 
@@ -77,6 +83,9 @@ protected:
 
 	UFUNCTION()
 	void HandleEndTurnClicked();
+
+	UFUNCTION()
+	void HandleBackToLobbyClicked();
 
 	ACGGameMode* GetCGGameMode() const;
 

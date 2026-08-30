@@ -4,6 +4,7 @@
 #include "CGCardDatabase.h"
 #include "CGGameHUD.h"
 #include "CGAIOpponent.h"
+#include "CGGameInstance.h"
 #include "CardGame.h"
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
@@ -80,6 +81,12 @@ void ACGGameMode::InitializeMatch()
 	CGState->Sides.Reset();
 	const TArray<FName> Starter = UCGCardDatabase::GetStarterDeckCardIds();
 
+	// Side0(人間)はデッキ構築画面で選んだデッキ(GameInstanceに保持)を使う。
+	// デッキ構築を経ずにこのレベルへ直接PIEした場合など、GameInstanceが無い/
+	// デッキが不正(12枚固定ルールに反する)な場合は現行のスターターデッキへ
+	// フォールバックする(docs/architecture.md「デッキの永続化」参照)。
+	UCGGameInstance* CGGameInstance = GetGameInstance<UCGGameInstance>();
+
 	const TSubclassOf<APlayerState> SideClass = PlayerStateClass ? *PlayerStateClass : ACGPlayerState::StaticClass();
 
 	for (int32 i = 0; i < 2; ++i)
@@ -95,7 +102,10 @@ void ACGGameMode::InitializeMatch()
 		Side->MaxMana = 0;
 		Side->CurrentMana = 0;
 		Side->bIsDefeated = false;
-		Side->InitializeStartingDeck(Starter);
+
+		const bool bUsePlayerDeck = (i == 0) && CGGameInstance && CGGameInstance->PlayerDeckCardIds.Num() == 12;
+		Side->InitializeStartingDeck(bUsePlayerDeck ? CGGameInstance->PlayerDeckCardIds : Starter);
+
 		for (int32 d = 0; d < 5; ++d)
 		{
 			Side->DrawCard();

@@ -9,7 +9,7 @@ class ACGGameMode;
 // 対戦相手側(AI制御)の意思決定ロジック。以前は進行管理を担う ACGGameMode に
 // RunAITurn() として同居していたが、AIをもっと賢くする/難易度を分けるといった
 // 将来の拡張時にGameMode本体を肥大化させないよう、専用クラスへ切り出している
-// (docs/refactor-plan-architecture.md Step 4)。
+// (docs/architecture.md「対戦ロジックのクラス責務」)。
 // GameModeの公開APIのみを呼んで進行させるため、進行ルール自体はGameMode側に残る。
 UCLASS(BlueprintType)
 class UCGAIOpponent : public UObject

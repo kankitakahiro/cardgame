@@ -10,43 +10,26 @@
 #include "Components/Button.h"
 #include "Components/Border.h"
 #include "Components/ScrollBox.h"
-#include "Components/Spacer.h"
+#include "Components/ScrollBoxSlot.h"
 #include "Components/SizeBox.h"
 #include "Components/VerticalBoxSlot.h"
+#include "Components/HorizontalBoxSlot.h"
 #include "Blueprint/WidgetTree.h"
 #include "Styling/CoreStyle.h"
+#include "Kismet/GameplayStatics.h"
 #include "CardGame.h"
 
 namespace
 {
-	// 場のユニット/相手の裏向き手札で使う固定カードサイズ。マーケット/自分の手札は
-	// CGCardSlotWidgetのデフォルトサイズ(170x190、説明文を表示するため大きめ)を使う。
-	constexpr float FaceDownCardWidth = 70.f;
-	constexpr float FaceDownCardHeight = 90.f;
-	constexpr float BoardCardWidth = 120.f;
-	constexpr float BoardCardHeight = 110.f;
+	// 勝敗確定後に「ロビーへ戻る」ボタンから遷移する先(docs/architecture.md「レベルと画面遷移」)。
+	const TCHAR* LobbyLevelPath = TEXT("/Game/CardGame/Maps/L_Lobby");
 
-	FString FormatCard(const FCGCardDef& Def)
-	{
-		FString Base;
-		if (Def.CardType == ECGCardType::Unit)
-		{
-			Base = FString::Printf(TEXT("%s [%d]\n%d/%d"), *Def.CardName, Def.Cost, Def.Atk, Def.Hp);
-		}
-		else
-		{
-			Base = FString::Printf(TEXT("%s [%d]"), *Def.CardName, Def.Cost);
-		}
-
-		if (!Def.Description.IsEmpty())
-		{
-			Base += FString::Printf(TEXT("\n%s"), *Def.Description);
-		}
-		return Base;
-	}
+	// カードはカーソルを乗せると拡大プレビューが表示されるが、それは最前面の専用レイヤーに
+	// 複製されて描かれるため(UCGCardHostWidget)、行のレイアウト自体は拡大分の余白を
+	// 確保する必要がない。カード同士の間隔は見た目用の小さな固定値だけで良い。
+	const float CardGap = 6.f;
 
 	// カード枚数が増えても画面外へあふれないよう、各行を横スクロール可能にする。
-	// 戻り値は中身を詰めるHorizontalBox(RefreshUIから直接ClearChildren/Add...で使う)。
 	UHorizontalBox* MakeScrollableRow(UWidgetTree* WidgetTree, UVerticalBox* Root, const TCHAR* Name)
 	{
 		UScrollBox* ScrollBox = WidgetTree->ConstructWidget<UScrollBox>(UScrollBox::StaticClass(),
@@ -54,6 +37,7 @@ namespace
 		ScrollBox->SetOrientation(EOrientation::Orient_Horizontal);
 
 		UHorizontalBox* InnerBox = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), Name);
+
 		ScrollBox->AddChild(InnerBox);
 
 		if (UVerticalBoxSlot* Slot = Root->AddChildToVerticalBox(ScrollBox))
@@ -97,7 +81,10 @@ void UCGGameHUD::EnsureWidgetTreeBuilt()
 	bWidgetTreeBuilt = true;
 
 	UVerticalBox* Root = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("HUDRoot"));
-	WidgetTree->RootWidget = Root;
+
+	// カードのホバー拡大プレビューを最前面に出すための共通レイヤーをRootに重ねる
+	// (UCGCardHostWidget::BuildRootOverlay、docs/architecture.md「ホバー拡大とZ順序」)。
+	WidgetTree->RootWidget = BuildRootOverlay(Root);
 
 	// ステータス〜手札までを縦スクロール領域に入れる。画面が狭くても中身が画面外に
 	// あふれてEndTurnボタンごと見えなくなる、という事態を避けるため。
@@ -157,6 +144,25 @@ void UCGGameHUD::EnsureWidgetTreeBuilt()
 		EndTurnSlot->SetPadding(FMargin(12.f));
 	}
 
+	// 勝敗確定後のみ表示する導線。それまではCollapsedにしておく(RefreshUIで切り替える)。
+	// EndTurnButtonと違い高さ固定のSizeBoxで包まないのは、Collapsed時にVerticalBox上で
+	// 実際にスペースごと消えるようにするため(SizeBoxはHeightOverrideを子の可視状態に
+	// 関わらず親へ申告してしまい、隠れているのに空白が残ってしまう)。
+	BackToLobbyButton = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), TEXT("BackToLobbyButton"));
+	UTextBlock* BackToLobbyLabel = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("BackToLobbyLabel"));
+	BackToLobbyLabel->SetText(FText::FromString(TEXT("ロビーへ戻る")));
+	BackToLobbyLabel->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 16));
+	BackToLobbyLabel->SetJustification(ETextJustify::Center);
+	BackToLobbyButton->AddChild(BackToLobbyLabel);
+	BackToLobbyButton->OnClicked.AddDynamic(this, &UCGGameHUD::HandleBackToLobbyClicked);
+	BackToLobbyButton->SetVisibility(ESlateVisibility::Collapsed);
+
+	if (UVerticalBoxSlot* BackToLobbySlot = Root->AddChildToVerticalBox(BackToLobbyButton))
+	{
+		BackToLobbySlot->SetHorizontalAlignment(HAlign_Center);
+		BackToLobbySlot->SetPadding(FMargin(12.f, 0.f, 12.f, 12.f));
+	}
+
 	UE_LOG(LogCardGame, Log, TEXT("UCGGameHUD::EnsureWidgetTreeBuilt RootWidget=%s"),
 		WidgetTree->RootWidget ? *WidgetTree->RootWidget->GetName() : TEXT("null"));
 }
@@ -200,6 +206,9 @@ void UCGGameHUD::RefreshUI()
 			Other->CurrentHP, Other->CurrentMana, Other->MaxMana, Other->DeckCardIds.Num())));
 	}
 
+	// 勝敗確定後のみ「ロビーへ戻る」導線を表示する(docs/architecture.md「レベルと画面遷移」)。
+	BackToLobbyButton->SetVisibility(CGState->WinnerPlayerIndex != -1 ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+
 	// 相手の手札は中身を見せず、枚数分だけ裏向きカードを並べる(小さめサイズ)。
 	PopulateFaceDownHandRow(EnemyHandBox, Other->HandCardIds.Num());
 	PopulateBoardRow(EnemyBoardBox, Other, /*bIsSelfSide=*/false);
@@ -220,10 +229,14 @@ void UCGGameHUD::PopulateFaceDownHandRow(UHorizontalBox* Box, int32 CardCount)
 	for (int32 i = 0; i < CardCount; ++i)
 	{
 		UCGCardSlotWidget* FaceDownCard = CreateWidget<UCGCardSlotWidget>(GetWorld(), UCGCardSlotWidget::StaticClass());
-		FaceDownCard->SetCardSize(FaceDownCardWidth, FaceDownCardHeight);
 		FaceDownCard->SlotIndex = -1;
-		FaceDownCard->SetLabel(TEXT("?"));
-		Box->AddChildToHorizontalBox(FaceDownCard);
+		FaceDownCard->SetFaceDown();
+		RegisterCardHoverPreview(FaceDownCard);
+		if (UHorizontalBoxSlot* CardSlot = Box->AddChildToHorizontalBox(FaceDownCard))
+		{
+			CardSlot->SetVerticalAlignment(VAlign_Center);
+			CardSlot->SetPadding(FMargin(CardGap, 0.f));
+		}
 	}
 }
 
@@ -236,24 +249,32 @@ void UCGGameHUD::PopulateBoardRow(UHorizontalBox* Box, ACGPlayerState* Side, boo
 		FCGCardDef Def;
 		UCGCardDatabase::FindCard(BoardUnit.CardId, Def);
 
-		// 自分の場は攻撃可能かどうか、相手の場は守護持ちかどうかだけを添えて表示する。
+		// 自分の場だけ、攻撃可能かどうかを判定する(相手の場は常に攻撃できない)。
+		// 守護は場のユニットだけの一時的な状態ではなくカード自体の常設能力のため、
+		// SetCardData側で(部族欄に)常に表示している。
 		const bool bCanAttack = bIsSelfSide && BoardUnit.bCanAttack;
-		const bool bHasGuard = !bIsSelfSide && BoardUnit.bHasGuard;
-		const TCHAR* Suffix = bCanAttack ? TEXT("\n(Attack)") : (bHasGuard ? TEXT("\n[Guard]") : TEXT(""));
 
 		UCGCardSlotWidget* SlotWidget = CreateWidget<UCGCardSlotWidget>(GetWorld(), UCGCardSlotWidget::StaticClass());
-		SlotWidget->SetCardSize(BoardCardWidth, BoardCardHeight);
 		SlotWidget->SlotIndex = i;
-		SlotWidget->SetLabel(FString::Printf(TEXT("%s\n%d/%d%s"), *Def.CardName, BoardUnit.Atk, BoardUnit.Hp, Suffix));
-		if (!Def.Description.IsEmpty())
+		// 場のユニットはバフ等で現在のAtk/HpがカードDefの基本値と異なることがあるため、
+		// BoardUnit側の現在値で上書きする。
+		SlotWidget->SetCardData(Def, BoardUnit.Atk, BoardUnit.Hp);
+		RegisterCardHoverPreview(SlotWidget);
+		if (bIsSelfSide)
 		{
-			SlotWidget->SetToolTipText(FText::FromString(Def.Description));
+			// カードの情報自体は変えず、今は攻撃できないユニットを少し暗くするだけに留める
+			// (文字での注記はどの画面でも同じ情報を表示するという方針にそぐわないため)。
+			SlotWidget->SetRenderOpacity(bCanAttack ? 1.f : 0.5f);
+			if (bCanAttack)
+			{
+				SlotWidget->OnSlotClicked.AddDynamic(this, &UCGGameHUD::HandleBoardSlotClicked);
+			}
 		}
-		if (bCanAttack)
+		if (UHorizontalBoxSlot* CardSlot = Box->AddChildToHorizontalBox(SlotWidget))
 		{
-			SlotWidget->OnSlotClicked.AddDynamic(this, &UCGGameHUD::HandleBoardSlotClicked);
+			CardSlot->SetVerticalAlignment(VAlign_Center);
+			CardSlot->SetPadding(FMargin(CardGap, 0.f));
 		}
-		Box->AddChildToHorizontalBox(SlotWidget);
 	}
 }
 
@@ -266,17 +287,18 @@ void UCGGameHUD::PopulateCardRow(UHorizontalBox* Box, const TArray<FName>& CardI
 		UCGCardDatabase::FindCard(CardIds[i], Def);
 		UCGCardSlotWidget* SlotWidget = CreateWidget<UCGCardSlotWidget>(GetWorld(), UCGCardSlotWidget::StaticClass());
 		SlotWidget->SlotIndex = i;
-		SlotWidget->SetLabel(bIsMarketRow ? FString::Printf(TEXT("Buy\n%s"), *FormatCard(Def)) : FormatCard(Def));
-		if (!Def.Description.IsEmpty())
-		{
-			SlotWidget->SetToolTipText(FText::FromString(Def.Description));
-		}
+		SlotWidget->SetCardData(Def);
+		RegisterCardHoverPreview(SlotWidget);
 		// マーケット/手札はクリック時の処理だけが違うため、関数名指定で動的にバインドしている
 		// (AddDynamicはコンパイル時に関数を1つに固定するマクロのため、ここでは使えない)。
 		FScriptDelegate ClickDelegate;
 		ClickDelegate.BindUFunction(this, ClickHandlerName);
 		SlotWidget->OnSlotClicked.Add(ClickDelegate);
-		Box->AddChildToHorizontalBox(SlotWidget);
+		if (UHorizontalBoxSlot* CardSlot = Box->AddChildToHorizontalBox(SlotWidget))
+		{
+			CardSlot->SetVerticalAlignment(VAlign_Center);
+			CardSlot->SetPadding(FMargin(CardGap, 0.f));
+		}
 	}
 }
 
@@ -353,4 +375,9 @@ void UCGGameHUD::HandleEndTurnClicked()
 	}
 	GameMode->RequestEndTurn(CGState->CurrentTurnPlayerIndex);
 	RefreshUI();
+}
+
+void UCGGameHUD::HandleBackToLobbyClicked()
+{
+	UGameplayStatics::OpenLevel(this, FName(LobbyLevelPath));
 }

@@ -7,7 +7,7 @@
 
 class ACGPlayerState;
 
-// 対戦全体の公開状態。docs/blueprint-architecture.md の BP_CG_GameState に相当。
+// 対戦全体の公開状態(docs/architecture.md「対戦ロジックのクラス責務」)。
 UCLASS()
 class ACGGameState : public AGameStateBase
 {

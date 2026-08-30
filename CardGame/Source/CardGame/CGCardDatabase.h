@@ -23,8 +23,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "CardGame|Cards")
 	static TArray<FName> GetAllCardIds();
 
-	// 初期デッキ(12枚, docs/game-rules-minimum.md)。両プレイヤー共通の暫定ルールとして
-	// コストの低い12枚(C001〜C012)を採用している。docs/automation-notes.md にも根拠を記載。
+	// 初期デッキ(12枚, docs/game-rules-minimum.md)。デッキ構築画面を経ずに直接
+	// バトル画面へ入った場合(AI側および未構築時の人間側)のフォールバック用に、
+	// コストの低い12枚(C001〜C012)を採用している。
 	UFUNCTION(BlueprintPure, Category = "CardGame|Cards")
 	static TArray<FName> GetStarterDeckCardIds();
 };

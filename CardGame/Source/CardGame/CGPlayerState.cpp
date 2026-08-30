@@ -2,7 +2,7 @@
 #include "CGCardDatabase.h"
 #include "CGGameState.h"
 
-// カード効果ディスパッチ(docs/refactor-plan-architecture.md Step 2)。
+// カード効果ディスパッチ(docs/architecture.md「カード効果ディスパッチ」)。
 // 以前はResolveSpellEffect/ResolveUnitOnPlayEffectがEffectId文字列で分岐する
 // if/elseの塊で、カードが増えるほど際限なく伸びる作りだった。
 // EffectId -> ハンドラ関数 のテーブルに置き換え、新しいカード効果を足すときは
@@ -310,7 +310,7 @@ bool ACGPlayerState::PlayCardFromHand(FName CardId, ACGPlayerState* Opponent, in
 		{
 			// 簡易実装: 本来は「ターン中のみ」の一時バフだが、一時バフ管理の仕組みを
 			// 新設するコストを避けるため、登場時点にいる味方(このユニット自身を除く)へ
-			// 永続的に+1/+0を付与する形に簡略化している(docs/automation-notes.md参照)。
+			// 永続的に+1/+0を付与する形に簡略化している(docs/game-rules-minimum.md「未実装・今後の検討事項」参照)。
 			for (int32 i = 0; i < BoardUnits.Num() - 1; ++i)
 			{
 				BoardUnits[i].Atk += 1;
@@ -342,7 +342,7 @@ void ACGPlayerState::ResolveSpellEffect(const FCGCardDef& Def, ACGPlayerState* O
 		(SpellsPlayedThisTurn == 1 && HasBoardUnitWithEffect(FName(CGEffectId::FirstSpellBonusDamage))) ? 1 : 0;
 
 	// 実装済みの効果のみテーブルに登録されている。未登録のEffectId(TODO_接頭辞等)は
-	// 何もしない(docs/automation-notes.md の実装ロードマップ参照)。
+	// 何もしない(docs/architecture.md「カード効果ディスパッチ」参照)。
 	if (const FSpellEffectHandler* Handler = GetSpellEffectHandlers().Find(Def.EffectId))
 	{
 		(*Handler)(*this, Opponent, Def, TargetUnitIndex, CGState, FirstSpellDamageBonus);
