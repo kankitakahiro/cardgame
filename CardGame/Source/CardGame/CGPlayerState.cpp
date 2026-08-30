@@ -2,16 +2,230 @@
 #include "CGCardDatabase.h"
 #include "CGGameState.h"
 
+// カード効果ディスパッチ(docs/refactor-plan-architecture.md Step 2)。
+// 以前はResolveSpellEffect/ResolveUnitOnPlayEffectがEffectId文字列で分岐する
+// if/elseの塊で、カードが増えるほど際限なく伸びる作りだった。
+// EffectId -> ハンドラ関数 のテーブルに置き換え、新しいカード効果を足すときは
+// 「Handle_XXX関数を1つ書いて、対応するGet*Handlers()のテーブルに1行足すだけ」で
+// 済むようにしている。ハンドラは全て静的な関数ポインタ(状態を持たない)なので、
+// Side0/Side1どちらのACGPlayerStateインスタンスに対しても同じテーブルを使い回せる。
+namespace
+{
+	using FSpellEffectHandler = void(*)(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
+		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus);
+	using FUnitOnPlayEffectHandler = void(*)(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent);
+	using FUnitOnDeathEffectHandler = void(*)(ACGPlayerState& Self, const FCGCardDef& Def, int32& OutDrawCount);
+	using FEndTurnAuraEffectHandler = void(*)(ACGPlayerState& Self);
+
+	// ダメージ系スペルで繰り返し使う「対象ユニット指定があればそこへ、なければ先頭ユニット、
+	// ユニットが1体もいなければ顔面へ」という単一対象フォールバックルール
+	// (docs/game-rules-minimum.md)をまとめたヘルパー。
+	void DealDamageToTargetOrFallback(ACGPlayerState& Opponent, int32 TargetUnitIndex, int32 Damage)
+	{
+		if (Opponent.BoardUnits.IsValidIndex(TargetUnitIndex))
+		{
+			Opponent.ApplyDamageToUnit(TargetUnitIndex, Damage);
+		}
+		else if (Opponent.BoardUnits.Num() > 0)
+		{
+			Opponent.ApplyDamageToUnit(0, Damage);
+		}
+		else
+		{
+			Opponent.ApplyDamage(Damage);
+		}
+	}
+
+	// --- Spell効果ハンドラ ---
+
+	void Handle_OnPlayDamageTarget(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
+		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus)
+	{
+		if (!Opponent)
+		{
+			return;
+		}
+		DealDamageToTargetOrFallback(*Opponent, TargetUnitIndex, Def.EffectValue + FirstSpellDamageBonus);
+	}
+
+	void Handle_OnPlayHealSelf(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
+		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus)
+	{
+		Self.Heal(Def.EffectValue);
+	}
+
+	void Handle_Discard1Draw2(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
+		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // C019 手札の選別
+	{
+		Self.DiscardRandomFromHand();
+		Self.DrawCard();
+		Self.DrawCard();
+	}
+
+	void Handle_Summon2x1_1Unit(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
+		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // C020 見習い召集
+	{
+		Self.AddBoardUnitDirect(FName(TEXT("TK_APPRENTICE")), 1, 1, false, false);
+		Self.AddBoardUnitDirect(FName(TEXT("TK_APPRENTICE")), 1, 1, false, false);
+	}
+
+	void Handle_ReturnGraveyardSpellSelfDamage1(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
+		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // C021 墓地再点火
+	{
+		if (Self.TryReturnRandomSpellFromDiscardToHand())
+		{
+			Self.ApplyDamage(1);
+		}
+	}
+
+	void Handle_BuyFromMarketCostUnder3ToHand(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
+		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // C022 市場調達
+	{
+		if (!CGState || Self.HandCardIds.Num() >= 10)
+		{
+			return;
+		}
+		for (int32 i = 0; i < CGState->MarketCardIds.Num(); ++i)
+		{
+			FCGCardDef MarketDef;
+			if (UCGCardDatabase::FindCard(CGState->MarketCardIds[i], MarketDef) && MarketDef.Cost <= 3)
+			{
+				Self.HandCardIds.Add(CGState->MarketCardIds[i]);
+				CGState->MarketCardIds.RemoveAt(i);
+				CGState->RefillMarket();
+				break;
+			}
+		}
+	}
+
+	void Handle_RandomEnemyDamage1x4(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
+		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // C023 連弾の雨
+	{
+		if (!Opponent)
+		{
+			return;
+		}
+		for (int32 Hit = 0; Hit < 4; ++Hit)
+		{
+			if (Opponent->BoardUnits.Num() > 0)
+			{
+				const int32 RandomUnitIndex = FMath::RandRange(0, Opponent->BoardUnits.Num() - 1);
+				Opponent->ApplyDamageToUnit(RandomUnitIndex, 1);
+			}
+			else
+			{
+				Opponent->ApplyDamage(1);
+			}
+		}
+	}
+
+	void Handle_ConditionalDamage3or2(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
+		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // C024 逆転の号令
+	{
+		if (!Opponent)
+		{
+			return;
+		}
+		const int32 Damage = ((Self.CurrentHP <= Opponent->CurrentHP) ? 3 : 2) + FirstSpellDamageBonus;
+		DealDamageToTargetOrFallback(*Opponent, TargetUnitIndex, Damage);
+	}
+
+	const TMap<FName, FSpellEffectHandler>& GetSpellEffectHandlers()
+	{
+		static const TMap<FName, FSpellEffectHandler> Handlers = {
+			{ FName(CGEffectId::OnPlayDamageTarget), &Handle_OnPlayDamageTarget },
+			{ FName(CGEffectId::OnPlayHealSelf), &Handle_OnPlayHealSelf },
+			{ FName(CGEffectId::Discard1Draw2), &Handle_Discard1Draw2 },
+			{ FName(CGEffectId::Summon2x1_1Unit), &Handle_Summon2x1_1Unit },
+			{ FName(CGEffectId::ReturnGraveyardSpellSelfDamage1), &Handle_ReturnGraveyardSpellSelfDamage1 },
+			{ FName(CGEffectId::BuyFromMarketCostUnder3ToHand), &Handle_BuyFromMarketCostUnder3ToHand },
+			{ FName(CGEffectId::RandomEnemyDamage1x4), &Handle_RandomEnemyDamage1x4 },
+			{ FName(CGEffectId::ConditionalDamage3or2), &Handle_ConditionalDamage3or2 },
+		};
+		return Handlers;
+	}
+
+	// --- Unit登場時効果ハンドラ ---
+
+	void Handle_OnPlayDiscard1(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent) // C008 錆びた巨兵
+	{
+		Self.DiscardRandomFromHand();
+	}
+
+	void Handle_OnPlayReturnGraveyardCheapCard(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent) // C011 再誕の司祭
+	{
+		Self.TryReturnCheapestFromDiscardToHand(1);
+	}
+
+	void Handle_GraveyardToDeckBottomDraw1(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent) // C006 墓場あさり
+	{
+		Self.TryMoveRandomDiscardCardToDeckBottom();
+		Self.DrawCard();
+	}
+
+	void Handle_ScoutTop1(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent) // C001 先駆けの斥候
+	{
+		Self.ScryTop();
+	}
+
+	const TMap<FName, FUnitOnPlayEffectHandler>& GetUnitOnPlayEffectHandlers()
+	{
+		static const TMap<FName, FUnitOnPlayEffectHandler> Handlers = {
+			{ FName(CGEffectId::OnPlayDiscard1), &Handle_OnPlayDiscard1 },
+			{ FName(CGEffectId::OnPlayReturnGraveyardCheapCard), &Handle_OnPlayReturnGraveyardCheapCard },
+			{ FName(CGEffectId::GraveyardToDeckBottomDraw1), &Handle_GraveyardToDeckBottomDraw1 },
+			{ FName(CGEffectId::ScoutTop1), &Handle_ScoutTop1 },
+		};
+		return Handlers;
+	}
+
+	// --- Unit死亡時効果ハンドラ ---
+
+	void Handle_OnDeathDraw(ACGPlayerState& Self, const FCGCardDef& Def, int32& OutDrawCount)
+	{
+		OutDrawCount += Def.EffectValue;
+	}
+
+	void Handle_OnDeathReturnRandomGraveyardUnit(ACGPlayerState& Self, const FCGCardDef& Def, int32& OutDrawCount) // C014 霊廟の守り手
+	{
+		Self.TryMoveRandomDiscardUnitToDeckTop();
+	}
+
+	const TMap<FName, FUnitOnDeathEffectHandler>& GetUnitOnDeathEffectHandlers()
+	{
+		static const TMap<FName, FUnitOnDeathEffectHandler> Handlers = {
+			{ FName(CGEffectId::OnDeathDraw), &Handle_OnDeathDraw },
+			{ FName(CGEffectId::OnDeathReturnRandomGraveyardUnit), &Handle_OnDeathReturnRandomGraveyardUnit },
+		};
+		return Handlers;
+	}
+
+	// --- ターン終了時の常在効果ハンドラ(場にそのEffectIdを持つUnitがいれば発動) ---
+
+	void Handle_OnBuyEndTurnDiscardDraw(ACGPlayerState& Self) // C007 市場の仲買人
+	{
+		if (Self.bBoughtThisTurn && Self.HandCardIds.Num() > 0)
+		{
+			Self.DiscardRandomFromHand();
+			Self.DrawCard();
+		}
+	}
+
+	const TMap<FName, FEndTurnAuraEffectHandler>& GetEndTurnAuraEffectHandlers()
+	{
+		static const TMap<FName, FEndTurnAuraEffectHandler> Handlers = {
+			{ FName(CGEffectId::OnBuyEndTurnDiscardDraw), &Handle_OnBuyEndTurnDiscardDraw },
+		};
+		return Handlers;
+	}
+}
+
 void ACGPlayerState::InitializeStartingDeck(const TArray<FName>& StarterCardIds)
 {
 	DeckCardIds = StarterCardIds;
 	HandCardIds.Reset();
 	DiscardCardIds.Reset();
-	BoardUnitCardIds.Reset();
-	BoardUnitAtk.Reset();
-	BoardUnitHp.Reset();
-	BoardUnitCanAttack.Reset();
-	BoardUnitHasGuard.Reset();
+	BoardUnits.Reset();
 	ShuffleDeck();
 }
 
@@ -78,26 +292,28 @@ bool ACGPlayerState::PlayCardFromHand(FName CardId, ACGPlayerState* Opponent, in
 	if (Def.CardType == ECGCardType::Unit)
 	{
 		int32 EnterAtk = Def.Atk;
-		if (Def.EffectId == FName(TEXT("SecondPlayBuff")) && bIsSecondOrLaterPlayThisTurn) // C009 街道の突撃兵
+		if (Def.EffectId == FName(CGEffectId::SecondPlayBuff) && bIsSecondOrLaterPlayThisTurn) // C009 街道の突撃兵
 		{
 			EnterAtk += 1;
 		}
 
-		BoardUnitCardIds.Add(CardId);
-		BoardUnitAtk.Add(EnterAtk);
-		BoardUnitHp.Add(Def.Hp);
-		BoardUnitCanAttack.Add(Def.HasTag(TEXT("Haste")));
-		BoardUnitHasGuard.Add(Def.HasTag(TEXT("Guard")));
+		FCGBoardUnit NewUnit;
+		NewUnit.CardId = CardId;
+		NewUnit.Atk = EnterAtk;
+		NewUnit.Hp = Def.Hp;
+		NewUnit.bCanAttack = Def.HasTag(TEXT("Haste"));
+		NewUnit.bHasGuard = Def.HasTag(TEXT("Guard"));
+		BoardUnits.Add(NewUnit);
 		ResolveUnitOnPlayEffect(Def, Opponent);
 
-		if (Def.EffectId == FName(TEXT("AllyBuffAtkThisTurn"))) // C013 戦場の旗手
+		if (Def.EffectId == FName(CGEffectId::AllyBuffAtkThisTurn)) // C013 戦場の旗手
 		{
 			// 簡易実装: 本来は「ターン中のみ」の一時バフだが、一時バフ管理の仕組みを
 			// 新設するコストを避けるため、登場時点にいる味方(このユニット自身を除く)へ
 			// 永続的に+1/+0を付与する形に簡略化している(docs/automation-notes.md参照)。
-			for (int32 i = 0; i < BoardUnitAtk.Num() - 1; ++i)
+			for (int32 i = 0; i < BoardUnits.Num() - 1; ++i)
 			{
-				BoardUnitAtk[i] += 1;
+				BoardUnits[i].Atk += 1;
 			}
 		}
 	}
@@ -108,7 +324,7 @@ bool ACGPlayerState::PlayCardFromHand(FName CardId, ACGPlayerState* Opponent, in
 		DiscardCardIds.Add(CardId);
 
 		// 追撃の射手(C010): 味方Spell使用時、1ターンに1回だけ敵リーダーへ1ダメージ。
-		if (Opponent && !bAllySpellPingUsedThisTurn && HasBoardUnitWithEffect(FName(TEXT("OnAllySpellPing1"))))
+		if (Opponent && !bAllySpellPingUsedThisTurn && HasBoardUnitWithEffect(FName(CGEffectId::OnAllySpellPing1)))
 		{
 			Opponent->ApplyDamage(1);
 			bAllySpellPingUsedThisTurn = true;
@@ -120,133 +336,24 @@ bool ACGPlayerState::PlayCardFromHand(FName CardId, ACGPlayerState* Opponent, in
 
 void ACGPlayerState::ResolveSpellEffect(const FCGCardDef& Def, ACGPlayerState* Opponent, int32 TargetUnitIndex, ACGGameState* CGState)
 {
-	// 実装済みの効果のみ処理する。TODO_ 接頭辞のEffectIdはデータのみ保持し、ここでは何もしない
-	// (docs/automation-notes.md の実装ロードマップ参照)。
-
 	// 連鎖術の教授(C016)判定用: このSpellが「今ターン最初のSpell」かどうか
 	// (呼び出し元でSpellsPlayedThisTurnをインクリメント済みのため、1なら初回)。
 	const int32 FirstSpellDamageBonus =
-		(SpellsPlayedThisTurn == 1 && HasBoardUnitWithEffect(FName(TEXT("FirstSpellBonusDamage")))) ? 1 : 0;
+		(SpellsPlayedThisTurn == 1 && HasBoardUnitWithEffect(FName(CGEffectId::FirstSpellBonusDamage))) ? 1 : 0;
 
-	if (Def.EffectId == FName(TEXT("OnPlayDamageTarget")))
+	// 実装済みの効果のみテーブルに登録されている。未登録のEffectId(TODO_接頭辞等)は
+	// 何もしない(docs/automation-notes.md の実装ロードマップ参照)。
+	if (const FSpellEffectHandler* Handler = GetSpellEffectHandlers().Find(Def.EffectId))
 	{
-		if (!Opponent)
-		{
-			return;
-		}
-		const int32 Damage = Def.EffectValue + FirstSpellDamageBonus;
-		if (Opponent->BoardUnitCardIds.IsValidIndex(TargetUnitIndex))
-		{
-			Opponent->ApplyDamageToUnit(TargetUnitIndex, Damage);
-		}
-		else if (Opponent->BoardUnitCardIds.Num() > 0)
-		{
-			// 対象未指定時は先頭ユニットへ自動着弾(単一対象、docs/game-rules-minimum.md)。
-			Opponent->ApplyDamageToUnit(0, Damage);
-		}
-		else
-		{
-			Opponent->ApplyDamage(Damage);
-		}
-	}
-	else if (Def.EffectId == FName(TEXT("OnPlayHealSelf")))
-	{
-		Heal(Def.EffectValue);
-	}
-	else if (Def.EffectId == FName(TEXT("Discard1Draw2"))) // C019 手札の選別
-	{
-		DiscardRandomFromHand();
-		DrawCard();
-		DrawCard();
-	}
-	else if (Def.EffectId == FName(TEXT("Summon2x1_1Unit"))) // C020 見習い召集
-	{
-		AddBoardUnitDirect(FName(TEXT("TK_APPRENTICE")), 1, 1, false, false);
-		AddBoardUnitDirect(FName(TEXT("TK_APPRENTICE")), 1, 1, false, false);
-	}
-	else if (Def.EffectId == FName(TEXT("ReturnGraveyardSpellSelfDamage1"))) // C021 墓地再点火
-	{
-		if (TryReturnRandomSpellFromDiscardToHand())
-		{
-			ApplyDamage(1);
-		}
-	}
-	else if (Def.EffectId == FName(TEXT("BuyFromMarketCostUnder3ToHand"))) // C022 市場調達
-	{
-		if (CGState && HandCardIds.Num() < 10)
-		{
-			for (int32 i = 0; i < CGState->MarketCardIds.Num(); ++i)
-			{
-				FCGCardDef MarketDef;
-				if (UCGCardDatabase::FindCard(CGState->MarketCardIds[i], MarketDef) && MarketDef.Cost <= 3)
-				{
-					HandCardIds.Add(CGState->MarketCardIds[i]);
-					CGState->MarketCardIds.RemoveAt(i);
-					CGState->RefillMarket();
-					break;
-				}
-			}
-		}
-	}
-	else if (Def.EffectId == FName(TEXT("RandomEnemyDamage1x4"))) // C023 連弾の雨
-	{
-		if (!Opponent)
-		{
-			return;
-		}
-		for (int32 Hit = 0; Hit < 4; ++Hit)
-		{
-			if (Opponent->BoardUnitCardIds.Num() > 0)
-			{
-				const int32 RandomUnitIndex = FMath::RandRange(0, Opponent->BoardUnitCardIds.Num() - 1);
-				Opponent->ApplyDamageToUnit(RandomUnitIndex, 1);
-			}
-			else
-			{
-				Opponent->ApplyDamage(1);
-			}
-		}
-	}
-	else if (Def.EffectId == FName(TEXT("ConditionalDamage3or2"))) // C024 逆転の号令
-	{
-		if (!Opponent)
-		{
-			return;
-		}
-		const int32 Damage = ((CurrentHP <= Opponent->CurrentHP) ? 3 : 2) + FirstSpellDamageBonus;
-		if (Opponent->BoardUnitCardIds.IsValidIndex(TargetUnitIndex))
-		{
-			Opponent->ApplyDamageToUnit(TargetUnitIndex, Damage);
-		}
-		else if (Opponent->BoardUnitCardIds.Num() > 0)
-		{
-			Opponent->ApplyDamageToUnit(0, Damage);
-		}
-		else
-		{
-			Opponent->ApplyDamage(Damage);
-		}
+		(*Handler)(*this, Opponent, Def, TargetUnitIndex, CGState, FirstSpellDamageBonus);
 	}
 }
 
 void ACGPlayerState::ResolveUnitOnPlayEffect(const FCGCardDef& Def, ACGPlayerState* Opponent)
 {
-	if (Def.EffectId == FName(TEXT("OnPlayDiscard1"))) // C008 錆びた巨兵
+	if (const FUnitOnPlayEffectHandler* Handler = GetUnitOnPlayEffectHandlers().Find(Def.EffectId))
 	{
-		DiscardRandomFromHand();
-	}
-	else if (Def.EffectId == FName(TEXT("OnPlayReturnGraveyardCheapCard"))) // C011 再誕の司祭
-	{
-		TryReturnCheapestFromDiscardToHand(1);
-	}
-	else if (Def.EffectId == FName(TEXT("GraveyardToDeckBottomDraw1"))) // C006 墓場あさり
-	{
-		TryMoveRandomDiscardCardToDeckBottom();
-		DrawCard();
-	}
-	else if (Def.EffectId == FName(TEXT("ScoutTop1"))) // C001 先駆けの斥候
-	{
-		ScryTop();
+		(*Handler)(*this, Def, Opponent);
 	}
 }
 
@@ -356,11 +463,13 @@ void ACGPlayerState::ScryTop()
 
 void ACGPlayerState::AddBoardUnitDirect(FName CardId, int32 Atk, int32 Hp, bool bCanAttackImmediately, bool bHasGuard)
 {
-	BoardUnitCardIds.Add(CardId);
-	BoardUnitAtk.Add(Atk);
-	BoardUnitHp.Add(Hp);
-	BoardUnitCanAttack.Add(bCanAttackImmediately);
-	BoardUnitHasGuard.Add(bHasGuard);
+	FCGBoardUnit NewUnit;
+	NewUnit.CardId = CardId;
+	NewUnit.Atk = Atk;
+	NewUnit.Hp = Hp;
+	NewUnit.bCanAttack = bCanAttackImmediately;
+	NewUnit.bHasGuard = bHasGuard;
+	BoardUnits.Add(NewUnit);
 }
 
 bool ACGPlayerState::BuyCard(FName CardId)
@@ -372,7 +481,7 @@ bool ACGPlayerState::BuyCard(FName CardId)
 	}
 
 	// 市場監督官(C012)が場にいる間、購入コストを1軽減(最小1)。
-	const int32 EffectiveCost = HasBoardUnitWithEffect(FName(TEXT("BuyCostReductionThisTurn")))
+	const int32 EffectiveCost = HasBoardUnitWithEffect(FName(CGEffectId::BuyCostReductionThisTurn))
 		? FMath::Max(1, Def.Cost - 1)
 		: Def.Cost;
 
@@ -403,40 +512,35 @@ void ACGPlayerState::Heal(int32 Amount)
 
 void ACGPlayerState::ApplyDamageToUnit(int32 UnitIndex, int32 Amount)
 {
-	if (!BoardUnitHp.IsValidIndex(UnitIndex))
+	if (!BoardUnits.IsValidIndex(UnitIndex))
 	{
 		return;
 	}
-	BoardUnitHp[UnitIndex] -= Amount;
+	BoardUnits[UnitIndex].Hp -= Amount;
 }
 
 int32 ACGPlayerState::RemoveDeadUnitsAndGetDeathDrawCount()
 {
 	int32 DrawCount = 0;
-	for (int32 i = BoardUnitHp.Num() - 1; i >= 0; --i)
+	for (int32 i = BoardUnits.Num() - 1; i >= 0; --i)
 	{
-		if (BoardUnitHp[i] > 0)
+		if (BoardUnits[i].Hp > 0)
 		{
 			continue;
 		}
 
 		FCGCardDef Def;
-		const bool bFound = UCGCardDatabase::FindCard(BoardUnitCardIds[i], Def);
-		if (bFound && Def.EffectId == FName(TEXT("OnDeathDraw")))
-		{
-			DrawCount += Def.EffectValue;
-		}
+		const bool bFound = UCGCardDatabase::FindCard(BoardUnits[i].CardId, Def);
 
-		DiscardCardIds.Add(BoardUnitCardIds[i]);
-		BoardUnitCardIds.RemoveAt(i);
-		BoardUnitAtk.RemoveAt(i);
-		BoardUnitHp.RemoveAt(i);
-		BoardUnitCanAttack.RemoveAt(i);
-		BoardUnitHasGuard.RemoveAt(i);
+		DiscardCardIds.Add(BoardUnits[i].CardId);
+		BoardUnits.RemoveAt(i);
 
-		if (bFound && Def.EffectId == FName(TEXT("OnDeathReturnRandomGraveyardUnit"))) // C014 霊廟の守り手
+		if (bFound)
 		{
-			TryMoveRandomDiscardUnitToDeckTop();
+			if (const FUnitOnDeathEffectHandler* Handler = GetUnitOnDeathEffectHandlers().Find(Def.EffectId))
+			{
+				(*Handler)(*this, Def, DrawCount);
+			}
 		}
 	}
 	return DrawCount;
@@ -444,15 +548,15 @@ int32 ACGPlayerState::RemoveDeadUnitsAndGetDeathDrawCount()
 
 bool ACGPlayerState::HasGuardUnit() const
 {
-	return BoardUnitHasGuard.Contains(true);
+	return BoardUnits.ContainsByPredicate([](const FCGBoardUnit& Unit) { return Unit.bHasGuard; });
 }
 
 bool ACGPlayerState::HasBoardUnitWithEffect(FName EffectId) const
 {
-	for (const FName& Id : BoardUnitCardIds)
+	for (const FCGBoardUnit& Unit : BoardUnits)
 	{
 		FCGCardDef Def;
-		if (UCGCardDatabase::FindCard(Id, Def) && Def.EffectId == EffectId)
+		if (UCGCardDatabase::FindCard(Unit.CardId, Def) && Def.EffectId == EffectId)
 		{
 			return true;
 		}
@@ -473,9 +577,11 @@ void ACGPlayerState::RefreshManaForNewTurn()
 
 void ACGPlayerState::ResolveEndTurnEffects()
 {
-	if (bBoughtThisTurn && HasBoardUnitWithEffect(FName(TEXT("OnBuyEndTurnDiscardDraw"))) && HandCardIds.Num() > 0) // C007
+	for (const TPair<FName, FEndTurnAuraEffectHandler>& Pair : GetEndTurnAuraEffectHandlers())
 	{
-		DiscardRandomFromHand();
-		DrawCard();
+		if (HasBoardUnitWithEffect(Pair.Key))
+		{
+			Pair.Value(*this);
+		}
 	}
 }

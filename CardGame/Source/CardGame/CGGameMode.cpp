@@ -3,6 +3,7 @@
 #include "CGPlayerState.h"
 #include "CGCardDatabase.h"
 #include "CGGameHUD.h"
+#include "CGAIOpponent.h"
 #include "CardGame.h"
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
@@ -29,6 +30,8 @@ ACGGameMode::ACGGameMode()
 void ACGGameMode::BeginPlay()
 {
 	Super::BeginPlay();
+
+	AIOpponent = NewObject<UCGAIOpponent>(this);
 
 	InitializeMatch();
 
@@ -138,9 +141,9 @@ void ACGGameMode::StartTurn()
 	{
 		Active->RefreshManaForNewTurn();
 		Active->DrawCard();
-		for (int32 i = 0; i < Active->BoardUnitCanAttack.Num(); ++i)
+		for (FCGBoardUnit& Unit : Active->BoardUnits)
 		{
-			Active->BoardUnitCanAttack[i] = true;
+			Unit.bCanAttack = true;
 		}
 	}
 
@@ -154,9 +157,9 @@ void ACGGameMode::StartTurn()
 	CheckWinLose();
 	OnCardGameStateChanged();
 
-	if (CGState->WinnerPlayerIndex == -1 && CGState->CurrentTurnPlayerIndex == AISideIndex)
+	if (CGState->WinnerPlayerIndex == -1 && CGState->CurrentTurnPlayerIndex == AISideIndex && AIOpponent)
 	{
-		RunAITurn(AISideIndex);
+		AIOpponent->RunTurn(this, AISideIndex);
 	}
 }
 
@@ -251,7 +254,7 @@ bool ACGGameMode::RequestAttack(int32 AttackerSideIndex, int32 AttackerUnitIndex
 	{
 		return false;
 	}
-	if (!Attacker->BoardUnitCardIds.IsValidIndex(AttackerUnitIndex) || !Attacker->BoardUnitCanAttack[AttackerUnitIndex])
+	if (!Attacker->BoardUnits.IsValidIndex(AttackerUnitIndex) || !Attacker->BoardUnits[AttackerUnitIndex].bCanAttack)
 	{
 		return false;
 	}
@@ -259,18 +262,18 @@ bool ACGGameMode::RequestAttack(int32 AttackerSideIndex, int32 AttackerUnitIndex
 	// 守護(Guard)がいる場合は必ずそちらを対象にしなければならない。
 	if (Defender->HasGuardUnit())
 	{
-		if (!Defender->BoardUnitHasGuard.IsValidIndex(TargetUnitIndex) || !Defender->BoardUnitHasGuard[TargetUnitIndex])
+		if (!Defender->BoardUnits.IsValidIndex(TargetUnitIndex) || !Defender->BoardUnits[TargetUnitIndex].bHasGuard)
 		{
 			return false;
 		}
 	}
 
-	const int32 Damage = Attacker->BoardUnitAtk[AttackerUnitIndex];
-	Attacker->BoardUnitCanAttack[AttackerUnitIndex] = false;
+	const int32 Damage = Attacker->BoardUnits[AttackerUnitIndex].Atk;
+	Attacker->BoardUnits[AttackerUnitIndex].bCanAttack = false;
 
-	if (Defender->BoardUnitCardIds.IsValidIndex(TargetUnitIndex))
+	if (Defender->BoardUnits.IsValidIndex(TargetUnitIndex))
 	{
-		const int32 CounterDamage = Defender->BoardUnitAtk[TargetUnitIndex];
+		const int32 CounterDamage = Defender->BoardUnits[TargetUnitIndex].Atk;
 		Defender->ApplyDamageToUnit(TargetUnitIndex, Damage);
 		Attacker->ApplyDamageToUnit(AttackerUnitIndex, CounterDamage);
 	}
@@ -312,100 +315,6 @@ void ACGGameMode::RequestEndTurn(int32 SideIndex)
 	}
 	CGState->CurrentTurnPlayerIndex = (SideIndex == 0) ? 1 : 0;
 	StartTurn();
-}
-
-void ACGGameMode::RunAITurn(int32 SideIndex)
-{
-	ACGGameState* CGState = GetCGGameState();
-	ACGPlayerState* AISide = (CGState && CGState->Sides.IsValidIndex(SideIndex)) ? CGState->Sides[SideIndex] : nullptr;
-	if (!CGState || !AISide)
-	{
-		return;
-	}
-
-	// 購入: 使えるマナがある限り、買えるカードの中で一番コストが高いものから買っていく。
-	// (RequestBuyCardが失敗した=想定外の理由で買えない場合は無限ループ回避のため打ち切る)
-	for (int32 SafetyCounter = 0; SafetyCounter < 30 && CGState->WinnerPlayerIndex == -1; ++SafetyCounter)
-	{
-		FName BestCardId = NAME_None;
-		int32 BestCost = -1;
-		for (const FName& MarketCardId : CGState->MarketCardIds)
-		{
-			FCGCardDef Def;
-			if (UCGCardDatabase::FindCard(MarketCardId, Def) && Def.Cost <= AISide->CurrentMana && Def.Cost > BestCost)
-			{
-				BestCost = Def.Cost;
-				BestCardId = MarketCardId;
-			}
-		}
-		if (BestCardId == NAME_None || !RequestBuyCard(SideIndex, BestCardId))
-		{
-			break;
-		}
-	}
-
-	// プレイ: 手札の中で一番コストが高い、出せるカードから順に出していく。
-	for (int32 SafetyCounter = 0; SafetyCounter < 30 && CGState->WinnerPlayerIndex == -1; ++SafetyCounter)
-	{
-		FName BestCardId = NAME_None;
-		int32 BestCost = -1;
-		for (const FName& HandCardId : AISide->HandCardIds)
-		{
-			FCGCardDef Def;
-			if (UCGCardDatabase::FindCard(HandCardId, Def) && Def.Cost <= AISide->CurrentMana && Def.Cost > BestCost)
-			{
-				BestCost = Def.Cost;
-				BestCardId = HandCardId;
-			}
-		}
-		if (BestCardId == NAME_None || !RequestPlayCard(SideIndex, BestCardId))
-		{
-			break;
-		}
-	}
-
-	// 攻撃: 攻撃可能なユニットで、相手に守護がいれば必ずそちらを、いなければ顔面を攻撃する
-	// (人間側のHandleBoardSlotClickedと同じ自動ターゲットルール)。
-	for (int32 SafetyCounter = 0; SafetyCounter < 30 && CGState->WinnerPlayerIndex == -1; ++SafetyCounter)
-	{
-		int32 AttackerUnitIndex = -1;
-		for (int32 i = 0; i < AISide->BoardUnitCanAttack.Num(); ++i)
-		{
-			if (AISide->BoardUnitCanAttack[i])
-			{
-				AttackerUnitIndex = i;
-				break;
-			}
-		}
-		if (AttackerUnitIndex == -1)
-		{
-			break;
-		}
-
-		ACGPlayerState* Defender = GetOpponent(SideIndex);
-		int32 TargetUnitIndex = -1;
-		if (Defender && Defender->HasGuardUnit())
-		{
-			for (int32 i = 0; i < Defender->BoardUnitHasGuard.Num(); ++i)
-			{
-				if (Defender->BoardUnitHasGuard[i])
-				{
-					TargetUnitIndex = i;
-					break;
-				}
-			}
-		}
-
-		if (!RequestAttack(SideIndex, AttackerUnitIndex, TargetUnitIndex))
-		{
-			break;
-		}
-	}
-
-	if (CGState->WinnerPlayerIndex == -1)
-	{
-		RequestEndTurn(SideIndex);
-	}
 }
 
 void ACGGameMode::CheckWinLose()

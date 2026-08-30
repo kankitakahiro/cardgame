@@ -72,3 +72,64 @@ struct FCGCardDef
 		return Parts.Contains(Tag);
 	}
 };
+
+// 場に出ているユニット1体分の状態。以前はCGPlayerState側で
+// BoardUnitCardIds/Atk/Hp/CanAttack/HasGuardという5本のパラレル配列で
+// 管理していたが、新しい状態(毒/バフ/沈黙等)を足すたびに配列が増えて
+// 同期が崩れやすかったため、1つの構造体にまとめている
+// (docs/refactor-plan-architecture.md Step 1参照)。
+USTRUCT(BlueprintType)
+struct FCGBoardUnit
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "CardGame")
+	FName CardId;
+
+	UPROPERTY(BlueprintReadOnly, Category = "CardGame")
+	int32 Atk = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "CardGame")
+	int32 Hp = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "CardGame")
+	bool bCanAttack = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "CardGame")
+	bool bHasGuard = false;
+};
+
+// FCGCardDef::EffectId に入る値の一覧。以前は FName(TEXT("...")) のリテラルが
+// CGCardDatabase.cpp(カード定義)とCGPlayerState.cpp(効果ハンドラ登録)の両方に
+// 重複して散らばっており、タイポがあっても気付きにくかった。ここに集約することで
+// 両者が同じ定数を参照するようにする(docs/refactor-plan-architecture.md Step 3)。
+namespace CGEffectId
+{
+	inline constexpr const TCHAR* None = TEXT("None");
+
+	// Unit登場時効果
+	inline constexpr const TCHAR* ScoutTop1 = TEXT("ScoutTop1");                                   // C001 先駆けの斥候
+	inline constexpr const TCHAR* GraveyardToDeckBottomDraw1 = TEXT("GraveyardToDeckBottomDraw1");  // C006 墓場あさり
+	inline constexpr const TCHAR* OnPlayDiscard1 = TEXT("OnPlayDiscard1");                          // C008 錆びた巨兵
+	inline constexpr const TCHAR* SecondPlayBuff = TEXT("SecondPlayBuff");                          // C009 街道の突撃兵
+	inline constexpr const TCHAR* OnPlayReturnGraveyardCheapCard = TEXT("OnPlayReturnGraveyardCheapCard"); // C011 再誕の司祭
+	inline constexpr const TCHAR* AllyBuffAtkThisTurn = TEXT("AllyBuffAtkThisTurn");                // C013 戦場の旗手
+
+	// Unit常在効果(場にいる間ずっと有効。HasBoardUnitWithEffectで判定)
+	inline constexpr const TCHAR* OnDeathDraw = TEXT("OnDeathDraw");                                // C004 小さな研究者
+	inline constexpr const TCHAR* OnBuyEndTurnDiscardDraw = TEXT("OnBuyEndTurnDiscardDraw");        // C007 市場の仲買人
+	inline constexpr const TCHAR* OnAllySpellPing1 = TEXT("OnAllySpellPing1");                      // C010 追撃の射手
+	inline constexpr const TCHAR* BuyCostReductionThisTurn = TEXT("BuyCostReductionThisTurn");      // C012 市場監督官
+	inline constexpr const TCHAR* OnDeathReturnRandomGraveyardUnit = TEXT("OnDeathReturnRandomGraveyardUnit"); // C014 霊廟の守り手
+	inline constexpr const TCHAR* FirstSpellBonusDamage = TEXT("FirstSpellBonusDamage");            // C016 連鎖術の教授
+
+	// Spell効果
+	inline constexpr const TCHAR* OnPlayDamageTarget = TEXT("OnPlayDamageTarget");                  // C017 火花の一撃
+	inline constexpr const TCHAR* OnPlayHealSelf = TEXT("OnPlayHealSelf");                          // C018 応急手当
+	inline constexpr const TCHAR* Discard1Draw2 = TEXT("Discard1Draw2");                            // C019 手札の選別
+	inline constexpr const TCHAR* Summon2x1_1Unit = TEXT("Summon2x1_1Unit");                        // C020 見習い召集
+	inline constexpr const TCHAR* ReturnGraveyardSpellSelfDamage1 = TEXT("ReturnGraveyardSpellSelfDamage1"); // C021 墓地再点火
+	inline constexpr const TCHAR* BuyFromMarketCostUnder3ToHand = TEXT("BuyFromMarketCostUnder3ToHand");     // C022 市場調達
+	inline constexpr const TCHAR* RandomEnemyDamage1x4 = TEXT("RandomEnemyDamage1x4");              // C023 連弾の雨
+	inline constexpr const TCHAR* ConditionalDamage3or2 = TEXT("ConditionalDamage3or2");            // C024 逆転の号令
+}

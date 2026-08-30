@@ -230,20 +230,21 @@ void UCGGameHUD::PopulateFaceDownHandRow(UHorizontalBox* Box, int32 CardCount)
 void UCGGameHUD::PopulateBoardRow(UHorizontalBox* Box, ACGPlayerState* Side, bool bIsSelfSide)
 {
 	Box->ClearChildren();
-	for (int32 i = 0; i < Side->BoardUnitCardIds.Num(); ++i)
+	for (int32 i = 0; i < Side->BoardUnits.Num(); ++i)
 	{
+		const FCGBoardUnit& BoardUnit = Side->BoardUnits[i];
 		FCGCardDef Def;
-		UCGCardDatabase::FindCard(Side->BoardUnitCardIds[i], Def);
+		UCGCardDatabase::FindCard(BoardUnit.CardId, Def);
 
 		// 自分の場は攻撃可能かどうか、相手の場は守護持ちかどうかだけを添えて表示する。
-		const bool bCanAttack = bIsSelfSide && Side->BoardUnitCanAttack.IsValidIndex(i) && Side->BoardUnitCanAttack[i];
-		const bool bHasGuard = !bIsSelfSide && Side->BoardUnitHasGuard.IsValidIndex(i) && Side->BoardUnitHasGuard[i];
+		const bool bCanAttack = bIsSelfSide && BoardUnit.bCanAttack;
+		const bool bHasGuard = !bIsSelfSide && BoardUnit.bHasGuard;
 		const TCHAR* Suffix = bCanAttack ? TEXT("\n(Attack)") : (bHasGuard ? TEXT("\n[Guard]") : TEXT(""));
 
 		UCGCardSlotWidget* SlotWidget = CreateWidget<UCGCardSlotWidget>(GetWorld(), UCGCardSlotWidget::StaticClass());
 		SlotWidget->SetCardSize(BoardCardWidth, BoardCardHeight);
 		SlotWidget->SlotIndex = i;
-		SlotWidget->SetLabel(FString::Printf(TEXT("%s\n%d/%d%s"), *Def.CardName, Side->BoardUnitAtk[i], Side->BoardUnitHp[i], Suffix));
+		SlotWidget->SetLabel(FString::Printf(TEXT("%s\n%d/%d%s"), *Def.CardName, BoardUnit.Atk, BoardUnit.Hp, Suffix));
 		if (!Def.Description.IsEmpty())
 		{
 			SlotWidget->SetToolTipText(FText::FromString(Def.Description));
@@ -328,9 +329,9 @@ void UCGGameHUD::HandleBoardSlotClicked(int32 SlotIndex)
 	int32 TargetUnitIndex = -1;
 	if (Defender && Defender->HasGuardUnit())
 	{
-		for (int32 i = 0; i < Defender->BoardUnitHasGuard.Num(); ++i)
+		for (int32 i = 0; i < Defender->BoardUnits.Num(); ++i)
 		{
-			if (Defender->BoardUnitHasGuard[i])
+			if (Defender->BoardUnits[i].bHasGuard)
 			{
 				TargetUnitIndex = i;
 				break;

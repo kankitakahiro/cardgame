@@ -44,19 +44,7 @@ public:
 	TArray<FName> DiscardCardIds;
 
 	UPROPERTY(BlueprintReadOnly, Category = "CardGame")
-	TArray<FName> BoardUnitCardIds;
-
-	UPROPERTY(BlueprintReadOnly, Category = "CardGame")
-	TArray<int32> BoardUnitAtk;
-
-	UPROPERTY(BlueprintReadOnly, Category = "CardGame")
-	TArray<int32> BoardUnitHp;
-
-	UPROPERTY(BlueprintReadOnly, Category = "CardGame")
-	TArray<bool> BoardUnitCanAttack;
-
-	UPROPERTY(BlueprintReadOnly, Category = "CardGame")
-	TArray<bool> BoardUnitHasGuard;
+	TArray<FCGBoardUnit> BoardUnits;
 
 	// 街道の突撃兵(C009)判定用: このターン何枚目のカードをプレイしたか。StartTurnで0に戻る。
 	UPROPERTY(BlueprintReadOnly, Category = "CardGame")
@@ -120,9 +108,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CardGame")
 	void ResolveEndTurnEffects();
 
-private:
-	void ResolveSpellEffect(const FCGCardDef& Def, ACGPlayerState* Opponent, int32 TargetUnitIndex, ACGGameState* CGState);
-	void ResolveUnitOnPlayEffect(const FCGCardDef& Def, ACGPlayerState* Opponent);
+	// 以下はカード効果ハンドラ(CGPlayerState.cpp 無名namespace内のHandle_*関数群、
+	// docs/refactor-plan-architecture.md Step 2参照)から呼ばれるための公開メンバー。
+	// 外部からの直接呼び出しは想定していない。
 
 	// 手札からランダムに1枚選んで捨てる(捨てる枚数を指定する効果がまだ無いため、
 	// 対象を選ぶUIも用意していない簡易実装)。
@@ -147,4 +135,8 @@ private:
 	// マーケットや購入を介さず、直接カードデータIDを指定して場にユニットを1体追加する
 	// (見習い召集の「1/1トークンを出す」等、実在カードではないユニットの生成に使う)。
 	void AddBoardUnitDirect(FName CardId, int32 Atk, int32 Hp, bool bCanAttackImmediately, bool bHasGuard);
+
+private:
+	void ResolveSpellEffect(const FCGCardDef& Def, ACGPlayerState* Opponent, int32 TargetUnitIndex, ACGGameState* CGState);
+	void ResolveUnitOnPlayEffect(const FCGCardDef& Def, ACGPlayerState* Opponent);
 };

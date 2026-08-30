@@ -7,6 +7,7 @@
 
 class ACGGameState;
 class ACGPlayerState;
+class UCGAIOpponent;
 
 // 対戦進行の中核。docs/blueprint-architecture.md の BP_CG_GameMode に相当。
 // docs/ue58-implementation-checklist.md の「実装順」1〜9を満たす最小ゲームループを実装する。
@@ -56,10 +57,11 @@ protected:
 	void CheckWinLose();
 	ACGPlayerState* GetOpponent(int32 SideIndex) const;
 
-	// Side 1は常にAI制御(一人二役の解消)。手番がSide 1になったStartTurnの終わりで
-	// 呼ばれ、購入→プレイ→攻撃→EndTurnまでを1回の呼び出し内で同期的に完結させる。
-	// これにより、HUDのRefreshUI()が呼ばれる頃には手番は必ず人間(Side 0)に戻っている。
-	void RunAITurn(int32 SideIndex);
+	// Side 1は常にAI制御(一人二役の解消)。意思決定ロジック自体はUCGAIOpponentへ
+	// 切り出してあり(docs/refactor-plan-architecture.md Step 4)、GameModeはそれを
+	// 手番がSide 1になったStartTurnの終わりで呼ぶだけにしている。
+	UPROPERTY()
+	TObjectPtr<UCGAIOpponent> AIOpponent;
 
 	// GameMode::BeginPlay時点ではローカルプレイヤーのビューポートがまだ描画準備完了
 	// していないことがあり、その場でAddToViewport()しても画面に反映されないことがある。
