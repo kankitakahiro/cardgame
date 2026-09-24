@@ -10,6 +10,8 @@ class UButton;
 class UTextBlock;
 class UBorder;
 class UOverlay;
+class UWidget;
+class UWidgetTree;
 class UCGCardSlotWidget;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCGOnSlotClicked, int32, SlotIndex);
@@ -63,7 +65,39 @@ public:
 	// 直近に呼ばれたSetCardData/SetFaceDownの内容を覚えておいて、そのまま再現する。
 	void CopyCardDataTo(UCGCardSlotWidget* Target) const;
 
+	// 直近がSetFaceDown()呼び出しかどうか(裏向きカード)。UCGCardHostWidget::
+	// HandleCardHoverChangedが、情報の無い裏向きカードでは拡大プレビューを
+	// 出さないようにするために使う(「何も見えない大きな空白が出るだけで邪魔」
+	// というフィードバックへの対応)。
+	bool IsFaceDown() const { return bLastWasFaceDown; }
+
+	// バトル画面の盤面/マーケット/手札のように、カードを縮小して行に並べたい場合に使う。
+	// Cardの内部レイアウト(余白・フォント・画像欄の高さ等)は基準サイズ(CardWidth/
+	// CardHeight)のまま一切変更せず、見た目だけをRenderTransformでまるごと縮小コピー
+	// したように見せる(内部要素を個別に縮小すると、固定ピクセルの余白/画像欄が小さい
+	// カードでは相対的に大きくなりすぎてデザインが崩れるため。ホバー時の拡大プレビューが
+	// 実寸コピーを表示するのと対になる考え方。docs/architecture.md「カードUIの設計」参照)。
+	// 戻り値(Cardをラップしたウィジェット、Scale>=1.0ならCard自身)を行のパネルへ追加する。
+	// RenderTransformは最終的な画面上の位置・サイズに反映されるため、ホバー判定や
+	// ホバープレビューの位置計算(UCGCardHostWidget)は変更なしでそのまま機能する。
+	static UWidget* WrapForCompactDisplay(UWidgetTree* CallerWidgetTree, UCGCardSlotWidget* Card, float DisplayScale);
+
+	// WrapForCompactDisplay()でラップされたウィジェットから、元のUCGCardSlotWidgetを
+	// 取り出す。攻撃演出等で、行に並んでいる実際のカードを後から参照したいときに使う
+	// (docs/architecture.md「カードUIの設計」)。ラップされていなければCard自身を返す。
+	static UCGCardSlotWidget* UnwrapCompactDisplay(UWidget* Wrapped);
+
+	// 攻撃演出: 指定したローカル座標ぶんだけ一瞬動いて元の位置へ戻る(突進アニメーション)。
+	void PlayLungeTowards(const FVector2D& PeakLocalOffset, float Duration = 0.22f);
+
+	// 攻撃演出: 一瞬指定色に点滅してから元の色へ戻る(被弾フラッシュ)。
+	// TargetColorを変えることで、被弾(赤)以外の用途(カードプレイ時の金色点滅等)にも流用できる。
+	void PlayHitFlash(float Duration = 0.45f, FLinearColor TargetColor = FLinearColor(1.f, 0.05f, 0.05f));
+
 protected:
+	// PlayLungeTowards/PlayHitFlashの進行をフレームごとに更新する。
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
+
 	// WidgetTree->RootWidgetは NativeConstruct() ではなく RebuildWidget() の中で
 	// 設定しないと、Slate側が先に空のプレースホルダー(SSpacer)を取得してキャッシュ
 	// してしまい、後からRootWidgetを設定しても画面に反映されない
@@ -78,6 +112,7 @@ protected:
 
 	void EnsureBuilt();
 	void ApplyCardTypeColor();
+	void ApplyCardTypeIcon();
 	void RefreshDisplay();
 
 	UPROPERTY()
@@ -85,6 +120,8 @@ protected:
 
 	// 各ゾーンのテキスト。
 	UPROPERTY() TObjectPtr<UTextBlock> CostText;
+	// コストバッジの右隣に表示する、Unit/Spellを区別するための小さな記号(ApplyCardTypeIcon参照)。
+	UPROPERTY() TObjectPtr<UTextBlock> TypeIconText;
 	UPROPERTY() TObjectPtr<UTextBlock> NameText;
 	UPROPERTY() TObjectPtr<UTextBlock> TribeText;
 	UPROPERTY() TObjectPtr<UTextBlock> EffectText;
@@ -97,6 +134,11 @@ protected:
 	UPROPERTY() TObjectPtr<UBorder> TypeBorder;
 	UPROPERTY() TObjectPtr<UBorder> RarityBorder;
 
+	// イラスト欄(画像アセット未用意のため場所だけ確保しているプレースホルダー)。
+	// 無地の灰色だと安っぽく見えるため、ApplyCardTypeColor()でカードの色に
+	// 合わせて塗る(「見た目を良くしたい」フィードバックへの対応)。
+	UPROPERTY() TObjectPtr<UBorder> ImagePlaceholder;
+
 	// 右下のATK/HP表示をカード面に重ねるためのOverlayと、その背景バッジ。
 	UPROPERTY() TObjectPtr<UOverlay> Overlay;
 	UPROPERTY() TObjectPtr<UBorder> StatBadgeBorder;
@@ -106,6 +148,15 @@ protected:
 
 private:
 	TOptional<ECGCardType> CardType;
+
+	// 次期ルール(docs/next-ruleset-design.md)の色。Noneまたは未設定なら旧来の
+	// Unit/Spellによる種別枠色にフォールバックする(ApplyCardTypeColor参照)。
+	TOptional<ECGColor> CardColorValue;
+
+	// フィニッシャーカード(Tags="Finisher")かどうか。専用の特別な枠デザインに
+	// するためApplyCardTypeColor()が参照する(「フィニッシャーカードは特別な
+	// カードデザインにしてほしい」というフィードバックへの対応)。
+	bool bIsFinisherCard = false;
 
 	// SetCardData/SetFaceDownで設定された、RefreshDisplay()が反映する内容。
 	// EnsureBuilt()より前に呼ばれる可能性があるため、一旦ここへ溜めてから反映する。
@@ -123,4 +174,16 @@ private:
 	FCGCardDef LastCardDef;
 	TOptional<int32> LastOverrideAtk;
 	TOptional<int32> LastOverrideHp;
+
+	// PlayLungeTowards()の進行状態。
+	bool bIsLunging = false;
+	float LungeElapsed = 0.f;
+	float LungeDuration = 0.f;
+	FVector2D LungePeakOffset = FVector2D::ZeroVector;
+
+	// PlayHitFlash()の進行状態。
+	bool bIsFlashing = false;
+	float FlashElapsed = 0.f;
+	float FlashDuration = 0.f;
+	FLinearColor FlashTargetColor = FLinearColor(1.f, 0.05f, 0.05f);
 };

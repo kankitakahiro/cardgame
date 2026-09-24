@@ -11,8 +11,11 @@
 #include "Components/VerticalBoxSlot.h"
 #include "Components/ButtonSlot.h"
 #include "Components/SizeBoxSlot.h"
+#include "Components/CanvasPanel.h"
+#include "Components/CanvasPanelSlot.h"
 #include "Blueprint/WidgetTree.h"
 #include "Styling/CoreStyle.h"
+#include "Styling/SlateBrush.h"
 
 namespace
 {
@@ -47,6 +50,21 @@ namespace
 	// カード面(イラストが無い部分の背景)。
 	const FLinearColor CardFaceColor(0.12f, 0.11f, 0.10f, 1.f);
 	const FLinearColor ImagePlaceholderColor(0.35f, 0.35f, 0.35f, 1.f);
+
+	// カードの角を丸めるための共通ヘルパー(「見た目を良くしたい」フィードバックへの
+	// 対応。ライフオーブ(UCGGameHUD::MakeCircleBadge)と同じ、FSlateBrushの
+	// RoundedBox描画を使う手法。テクスチャ資産は不要)。ここではTintColorを白にして
+	// おき、実際の色は呼び出し側が既存のUBorder::SetBrushColor()(BorderBackgroundColor
+	// として乗算される)で塗る形にする。こうすることでApplyCardTypeColor()等の
+	// 既存の色分けロジックには一切手を加えずに済む。
+	FSlateBrush MakeRoundedBrush(float Radius)
+	{
+		FSlateBrush Brush;
+		Brush.DrawAs = ESlateBrushDrawType::RoundedBox;
+		Brush.TintColor = FSlateColor(FLinearColor::White);
+		Brush.OutlineSettings = FSlateBrushOutlineSettings(Radius);
+		return Brush;
+	}
 }
 
 TSharedRef<SWidget> UCGCardSlotWidget::RebuildWidget()
@@ -99,26 +117,32 @@ void UCGCardSlotWidget::EnsureBuilt()
 	// VerticalAlignmentで持っており、これを明示しないと子(=次の内側の枠)が中身の量に
 	// 応じた自然なサイズになってしまい、カードごとに内側の枠の大きさがバラバラに見える
 	// バグになっていた。全階層で明示的に親いっぱいへ広げる。
+	// 角を丸める(「見た目を良くしたい」フィードバックへの対応)。同心円状に見えるよう、
+	// 外側ほど半径を大きく、内側ほど小さくする(各層の太さぶん差をつけている)。
 	OuterBorder = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("OuterBorder"));
 	OuterBorder->SetPadding(FMargin(OuterBorderThickness));
+	OuterBorder->SetBrush(MakeRoundedBrush(14.f));
 	OuterBorder->SetBrushColor(CardBorderColor);
 	OuterBorder->SetHorizontalAlignment(HAlign_Fill);
 	OuterBorder->SetVerticalAlignment(VAlign_Fill);
 
 	TypeBorder = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("TypeBorder"));
 	TypeBorder->SetPadding(FMargin(TypeBorderThickness));
+	TypeBorder->SetBrush(MakeRoundedBrush(10.f));
 	TypeBorder->SetBrushColor(CardTypeDefaultColor);
 	TypeBorder->SetHorizontalAlignment(HAlign_Fill);
 	TypeBorder->SetVerticalAlignment(VAlign_Fill);
 
 	RarityBorder = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("RarityBorder"));
 	RarityBorder->SetPadding(FMargin(RarityBorderThickness));
+	RarityBorder->SetBrush(MakeRoundedBrush(7.f));
 	RarityBorder->SetBrushColor(RarityPlaceholderColor);
 	RarityBorder->SetHorizontalAlignment(HAlign_Fill);
 	RarityBorder->SetVerticalAlignment(VAlign_Fill);
 
 	UBorder* FaceBackground = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("FaceBackground"));
 	FaceBackground->SetPadding(FMargin(0.f));
+	FaceBackground->SetBrush(MakeRoundedBrush(5.f));
 	FaceBackground->SetBrushColor(CardFaceColor);
 	FaceBackground->SetHorizontalAlignment(HAlign_Fill);
 	FaceBackground->SetVerticalAlignment(VAlign_Fill);
@@ -132,7 +156,16 @@ void UCGCardSlotWidget::EnsureBuilt()
 	CostSizeBox->SetWidthOverride(30.f);
 	CostSizeBox->SetHeightOverride(30.f);
 
+	// コストバッジは正方形のサイズ(30x30)を活かし、MTG Arenaのマナ表示のような
+	// 真円にする(HalfHeightRadius: 幅=高さの正方形なら自動的に真円になる)。
 	UBorder* CostBadge = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("CostBadge"));
+	{
+		FSlateBrush CircleBrush;
+		CircleBrush.DrawAs = ESlateBrushDrawType::RoundedBox;
+		CircleBrush.TintColor = FSlateColor(FLinearColor::White);
+		CircleBrush.OutlineSettings = FSlateBrushOutlineSettings(FSlateColor(FLinearColor(0.85f, 0.85f, 0.95f, 1.f)), 1.5f);
+		CostBadge->SetBrush(CircleBrush);
+	}
 	CostBadge->SetBrushColor(FLinearColor(0.15f, 0.15f, 0.55f, 1.f));
 	CostBadge->SetHorizontalAlignment(HAlign_Center);
 	CostBadge->SetVerticalAlignment(VAlign_Center);
@@ -148,6 +181,19 @@ void UCGCardSlotWidget::EnsureBuilt()
 		CostBadgeSlot->SetVerticalAlignment(VAlign_Fill);
 	}
 	HeaderRow->AddChildToHorizontalBox(CostSizeBox);
+
+	// コストバッジの右隣に、Unit/Spellを区別するための小さな記号を表示する
+	// (ApplyCardTypeIcon参照。色分け導入でUnit/Spellの見分けがつきにくくなった
+	// というフィードバックを受けての追加。カード全体の形や文字レイアウトには
+	// 触れない、独立した小さな要素にしている)。
+	TypeIconText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("TypeIconText"));
+	TypeIconText->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 14));
+	TypeIconText->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+	if (UHorizontalBoxSlot* TypeIconSlot = HeaderRow->AddChildToHorizontalBox(TypeIconText))
+	{
+		TypeIconSlot->SetPadding(FMargin(4.f, 0.f, 0.f, 0.f));
+		TypeIconSlot->SetVerticalAlignment(VAlign_Center);
+	}
 
 	NameText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("NameText"));
 	NameText->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 13));
@@ -166,7 +212,8 @@ void UCGCardSlotWidget::EnsureBuilt()
 	// --- イラスト欄(画像アセット未用意のため場所だけ確保) ---
 	USizeBox* ImageSizeBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("ImageSizeBox"));
 	ImageSizeBox->SetHeightOverride(ImagePlaceholderHeight);
-	UBorder* ImagePlaceholder = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("ImagePlaceholder"));
+	ImagePlaceholder = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("ImagePlaceholder"));
+	ImagePlaceholder->SetBrush(MakeRoundedBrush(4.f));
 	ImagePlaceholder->SetBrushColor(ImagePlaceholderColor);
 	if (USizeBoxSlot* ImagePlaceholderSlot = Cast<USizeBoxSlot>(ImageSizeBox->AddChild(ImagePlaceholder)))
 	{
@@ -223,6 +270,7 @@ void UCGCardSlotWidget::EnsureBuilt()
 
 	StatBadgeBorder = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("StatBadgeBorder"));
 	StatBadgeBorder->SetPadding(FMargin(7.f, 3.f));
+	StatBadgeBorder->SetBrush(MakeRoundedBrush(8.f));
 	StatBadgeBorder->SetBrushColor(FLinearColor(0.05f, 0.05f, 0.05f, 0.85f));
 	StatBadgeBorder->SetVisibility(ESlateVisibility::Collapsed);
 
@@ -261,6 +309,7 @@ void UCGCardSlotWidget::EnsureBuilt()
 	Button->OnClicked.AddDynamic(this, &UCGCardSlotWidget::HandleClicked);
 
 	ApplyCardTypeColor();
+	ApplyCardTypeIcon();
 	RefreshDisplay();
 }
 
@@ -275,7 +324,10 @@ void UCGCardSlotWidget::SetCardData(const FCGCardDef& Def, TOptional<int32> Over
 
 	// 部族とGuard/Hasteのようなキーワード能力を1行にまとめる。状況によって出したり
 	// 消したりする一言(旧StatusNote)ではなく、カード自体が持つ情報として常に表示する
-	// (場・手札・マーケットどこで見ても同じ内容になるようにするため)。
+	// (場・手札・マーケットどこで見ても同じ内容になるようにするため)。キーワードは
+	// 文字だけでは一覧性が低いという「見た目を良くしたい」フィードバックへの対応で、
+	// それぞれ専用の記号アイコンを頭に付ける(独自テクスチャ不要な、標準フォントに
+	// ある幾何学記号のみを使用)。部族名自体はキーワードではないためアイコンを付けない。
 	TArray<FString> TribeLineParts;
 	if (!Def.Tribe.IsEmpty())
 	{
@@ -283,11 +335,27 @@ void UCGCardSlotWidget::SetCardData(const FCGCardDef& Def, TOptional<int32> Over
 	}
 	if (Def.HasTag(TEXT("Guard")))
 	{
-		TribeLineParts.Add(TEXT("守護"));
+		TribeLineParts.Add(TEXT("■守護"));
 	}
 	if (Def.HasTag(TEXT("Haste")))
 	{
-		TribeLineParts.Add(TEXT("速攻"));
+		TribeLineParts.Add(TEXT("▶速攻"));
+	}
+	if (Def.HasTag(TEXT("Seal")))
+	{
+		TribeLineParts.Add(TEXT("●封印"));
+	}
+	if (Def.HasTag(TEXT("Transform")))
+	{
+		TribeLineParts.Add(TEXT("◆変貌"));
+	}
+	if (Def.HasTag(TEXT("Discount")))
+	{
+		TribeLineParts.Add(TEXT("▲先物"));
+	}
+	if (Def.HasTag(TEXT("Finisher")))
+	{
+		TribeLineParts.Add(TEXT("★フィニッシャー"));
 	}
 	PendingTribeText = FString::Join(TribeLineParts, TEXT(" ・ "));
 
@@ -301,7 +369,10 @@ void UCGCardSlotWidget::SetCardData(const FCGCardDef& Def, TOptional<int32> Over
 	}
 
 	CardType = Def.CardType;
+	CardColorValue = Def.Color;
+	bIsFinisherCard = Def.HasTag(TEXT("Finisher"));
 	ApplyCardTypeColor();
+	ApplyCardTypeIcon();
 	RefreshDisplay();
 
 	bHasCardData = true;
@@ -327,6 +398,118 @@ void UCGCardSlotWidget::SetFaceDown()
 
 	bHasCardData = true;
 	bLastWasFaceDown = true;
+}
+
+UWidget* UCGCardSlotWidget::WrapForCompactDisplay(UWidgetTree* CallerWidgetTree, UCGCardSlotWidget* Card, float DisplayScale)
+{
+	if (!CallerWidgetTree || !Card || DisplayScale >= 1.f)
+	{
+		return Card;
+	}
+
+	USizeBox* Wrapper = CallerWidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+	Wrapper->SetWidthOverride(CardWidth * DisplayScale);
+	Wrapper->SetHeightOverride(CardHeight * DisplayScale);
+
+	// USizeBoxは非Fill(Left/Top)の子でも、割り当てられた自分のサイズに子を収まる範囲へ
+	// 詰めて配置してしまう(基準サイズのまま配置されない)。このため、RenderTransformで
+	// 縮小する前に既に小さく詰められてしまい、二重に縮んで見えるバグになっていた。
+	// 割り当てサイズに関係なく子を絶対座標・基準サイズのまま配置できるUCanvasPanelを
+	// 間に挟むことで回避する(ホバー拡大プレビュー用の最前面レイヤーと同じ考え方。
+	// UCGCardHostWidget::HandleCardHoverChanged参照)。
+	UCanvasPanel* Canvas = CallerWidgetTree->ConstructWidget<UCanvasPanel>(UCanvasPanel::StaticClass());
+
+	// 内部レイアウトは基準サイズのまま、見た目だけをまるごと縮小する。個別の余白等を
+	// 縮小すると小さいカードでは相対的に大きくなりすぎて崩れるため。
+	Card->SetRenderTransformPivot(FVector2D(0.f, 0.f));
+	Card->SetRenderScale(FVector2D(DisplayScale, DisplayScale));
+
+	if (UCanvasPanelSlot* CanvasSlot = Canvas->AddChildToCanvas(Card))
+	{
+		CanvasSlot->SetAutoSize(false);
+		CanvasSlot->SetAnchors(FAnchors(0.f, 0.f, 0.f, 0.f));
+		CanvasSlot->SetPosition(FVector2D::ZeroVector);
+		CanvasSlot->SetSize(FVector2D(CardWidth, CardHeight));
+	}
+
+	Wrapper->AddChild(Canvas);
+
+	return Wrapper;
+}
+
+UCGCardSlotWidget* UCGCardSlotWidget::UnwrapCompactDisplay(UWidget* Wrapped)
+{
+	if (UCGCardSlotWidget* DirectCard = Cast<UCGCardSlotWidget>(Wrapped))
+	{
+		return DirectCard;
+	}
+
+	// WrapForCompactDisplay()が作る構造は SizeBox -> CanvasPanel -> Card。
+	if (const USizeBox* SizeBox = Cast<USizeBox>(Wrapped))
+	{
+		if (UCanvasPanel* Canvas = Cast<UCanvasPanel>(SizeBox->GetContent()))
+		{
+			if (Canvas->GetChildrenCount() > 0)
+			{
+				return Cast<UCGCardSlotWidget>(Canvas->GetChildAt(0));
+			}
+		}
+	}
+
+	return nullptr;
+}
+
+void UCGCardSlotWidget::PlayLungeTowards(const FVector2D& PeakLocalOffset, float Duration)
+{
+	bIsLunging = true;
+	LungeElapsed = 0.f;
+	LungeDuration = FMath::Max(Duration, 0.01f);
+	LungePeakOffset = PeakLocalOffset;
+}
+
+void UCGCardSlotWidget::PlayHitFlash(float Duration, FLinearColor TargetColor)
+{
+	bIsFlashing = true;
+	FlashElapsed = 0.f;
+	FlashDuration = FMath::Max(Duration, 0.01f);
+	FlashTargetColor = TargetColor;
+}
+
+void UCGCardSlotWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
+{
+	Super::NativeTick(MyGeometry, InDeltaTime);
+
+	if (bIsLunging)
+	{
+		LungeElapsed += InDeltaTime;
+		const float Alpha = FMath::Clamp(LungeElapsed / LungeDuration, 0.f, 1.f);
+		// 前半で突進先へ、後半で元の位置へ戻る往復(0->1->0)。
+		const float Wave = FMath::Sin(Alpha * PI);
+		SetRenderTranslation(LungePeakOffset * Wave);
+
+		if (Alpha >= 1.f)
+		{
+			bIsLunging = false;
+			SetRenderTranslation(FVector2D::ZeroVector);
+		}
+	}
+
+	if (bIsFlashing)
+	{
+		FlashElapsed += InDeltaTime;
+		const float Alpha = FMath::Clamp(FlashElapsed / FlashDuration, 0.f, 1.f);
+		// 一瞬でまっ赤まで色づかせて少し保持し、残りの時間で通常色へ戻す
+		// (単純なフェードだけだと一瞬すぎて気づきにくいというフィードバックのため)。
+		const float ColorAmount = 1.f - FMath::Clamp((Alpha - 0.25f) / 0.75f, 0.f, 1.f);
+		const FLinearColor FlashColor = FMath::Lerp(FLinearColor::White, FlashTargetColor, ColorAmount);
+		SetColorAndOpacity(FlashColor);
+
+		if (Alpha >= 1.f)
+		{
+			bIsFlashing = false;
+			SetColorAndOpacity(FLinearColor::White);
+		}
+	}
 }
 
 void UCGCardSlotWidget::CopyCardDataTo(UCGCardSlotWidget* Target) const
@@ -376,11 +559,76 @@ void UCGCardSlotWidget::ApplyCardTypeColor()
 	{
 		return;
 	}
-	// Unitは青系、Spellは紫系の枠にし、一覧で種別をひと目で見分けられるようにする。
-	const FLinearColor Color = (*CardType == ECGCardType::Unit)
-		? FLinearColor(0.30f, 0.55f, 0.95f)
-		: FLinearColor(0.75f, 0.35f, 0.85f);
-	TypeBorder->SetBrushColor(Color);
+
+	// 次期ルール(docs/next-ruleset-design.md)の色を持つカードは、種別(Unit/Spell)
+	// ではなく色そのもので枠を塗る(一覧で色をひと目で見分けられるようにするため。
+	// docs/game-rules-minimum.md)。旧来の無色カード(Color::None)は5色いずれとも
+	// 混同しないニュートラルな銀灰色にする(以前はUnit=青系/Spell=紫系に
+	// フォールバックしていたが、実際の青/紫カードと見分けが付きにくかったため。
+	// Unit/Spellの種別は別途TypeIconText(●/◆)で区別できるため、枠の色を
+	// 種別ごとに変える必要はない)。
+	FLinearColor FrameColor;
+	if (CardColorValue.IsSet() && *CardColorValue != ECGColor::None)
+	{
+		static const TMap<ECGColor, FLinearColor> ColorMap = {
+			{ ECGColor::Red,    FLinearColor(0.80f, 0.16f, 0.14f) },
+			{ ECGColor::Orange, FLinearColor(0.88f, 0.52f, 0.10f) },
+			{ ECGColor::Green,  FLinearColor(0.22f, 0.62f, 0.26f) },
+			{ ECGColor::Blue,   FLinearColor(0.20f, 0.45f, 0.85f) },
+			{ ECGColor::Purple, FLinearColor(0.58f, 0.26f, 0.75f) },
+		};
+		const FLinearColor* Found = ColorMap.Find(*CardColorValue);
+		FrameColor = Found ? *Found : FLinearColor(0.35f, 0.35f, 0.35f);
+	}
+	else
+	{
+		FrameColor = FLinearColor(0.55f, 0.55f, 0.58f);
+	}
+	TypeBorder->SetBrushColor(FrameColor);
+
+	// イラスト欄プレースホルダーも枠と同じ色系統の暗めの色にする(無地の灰色だと
+	// 「見た目を良くしたい」というフィードバックに対して安っぽく見えるため)。
+	// 明るさを落とすだけで色相・彩度はそのまま保つ(単純な乗算)。
+	if (ImagePlaceholder)
+	{
+		ImagePlaceholder->SetBrushColor(FLinearColor(FrameColor.R * 0.35f, FrameColor.G * 0.35f, FrameColor.B * 0.35f, 1.f));
+	}
+
+	// フィニッシャーカードは、色の対象条件(死亡数/購入数/ドロー数/場のUnit数/
+	// 変貌数)を達成したときだけ場に駆けつける特別な1枚のため、他のカードと
+	// 見た目で明確に区別できるようにする(「フィニッシャーカードは特別な
+	// カードデザインにしてほしい」というフィードバックへの対応)。金色の
+	// 外枠・飾り枠と、金色の名前テキストで統一する。通常のRarityBorder
+	// (現状は中間色のみの未使用の飾り枠)をこの用途に転用している。
+	static const FLinearColor FinisherGold(1.0f, 0.82f, 0.25f, 1.f);
+	if (OuterBorder)
+	{
+		OuterBorder->SetBrushColor(bIsFinisherCard ? FinisherGold : CardBorderColor);
+	}
+	if (RarityBorder)
+	{
+		RarityBorder->SetBrushColor(bIsFinisherCard ? FinisherGold : RarityPlaceholderColor);
+	}
+	if (NameText)
+	{
+		NameText->SetColorAndOpacity(bIsFinisherCard
+			? FSlateColor(FinisherGold)
+			: FSlateColor(FLinearColor::White));
+	}
+}
+
+void UCGCardSlotWidget::ApplyCardTypeIcon()
+{
+	if (!TypeIconText || !CardType.IsSet())
+	{
+		return;
+	}
+
+	// 色分け導入でUnit/Spellの見分けがつきにくくなったというフィードバックへの対応。
+	// カードの形を変えると効果文などが欠けてしまう(実機確認で判明)ため、代わりに
+	// コストバッジの隣にごく小さな記号を1つ添えるだけにする。絵文字の剣/巻物ではなく
+	// フォント依存が少ない基本記号(●/◆)にして、環境によって表示が崩れないようにする。
+	TypeIconText->SetText(FText::FromString(*CardType == ECGCardType::Unit ? TEXT("●") : TEXT("◆")));
 }
 
 void UCGCardSlotWidget::HandleClicked()
