@@ -26,3 +26,7 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 !.vscode/settings.json
+
+# Python (editor automation scripts)
+scripts/__pycache__/
+*.pyc
