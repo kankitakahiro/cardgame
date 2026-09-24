@@ -265,13 +265,19 @@ void ACGGameMode::InitializeMatch()
 	UCGGameInstance* CGGameInstance = GetGameInstance<UCGGameInstance>();
 
 	// AI(Side1)は色ごとの基本デッキ(各色15種類中5種類を3枚+残り10種類を1枚の
-	// 純色構成、しきい値17/25を満たす。docs/next-ruleset-design.md「色システム」)
-	// からランダムに1色選んで使う。人間側がデッキ未構築のときのフォールバックは
+	// 純色構成、しきい値17/25を満たす)を使う。ロビーの「対戦相手デッキ」画面で
+	// 選んだ色があればそれを使い(`UCGGameInstance::SelectedAIOpponentColor`、
+	// 「CPUと対戦するときに相手のデッキを選べるようにしてほしい」という
+	// フィードバックへの対応)、未選択(`ECGColor::None`、既定値)なら以前と同じく
+	// 5色からランダムに1色選ぶ。人間側がデッキ未構築のときのフォールバックは
 	// 「色の強さを検証する」目的ではないため、引き続き複数色混在のStarterのまま。
 	static constexpr ECGColor BasicDeckColors[] = {
 		ECGColor::Red, ECGColor::Orange, ECGColor::Green, ECGColor::Blue, ECGColor::Purple
 	};
-	const ECGColor AIDeckColor = BasicDeckColors[FMath::RandRange(0, UE_ARRAY_COUNT(BasicDeckColors) - 1)];
+	const ECGColor SelectedAIColor = CGGameInstance ? CGGameInstance->SelectedAIOpponentColor : ECGColor::None;
+	const ECGColor AIDeckColor = (SelectedAIColor != ECGColor::None)
+		? SelectedAIColor
+		: BasicDeckColors[FMath::RandRange(0, UE_ARRAY_COUNT(BasicDeckColors) - 1)];
 	const TArray<FName> AIDeck = UCGCardDatabase::GetBasicColorDeckCardIds(AIDeckColor);
 
 	const TSubclassOf<APlayerState> SideClass = PlayerStateClass ? *PlayerStateClass : ACGPlayerState::StaticClass();

@@ -59,6 +59,21 @@ protected:
 	UFUNCTION()
 	void HandleDeckSelectRowDeleted(int32 SlotIndex);
 
+	// 対戦相手(AI)デッキ選択(「CPUと対戦するときに相手のデッキを選べるように
+	// してほしい」というフィードバックへの対応)。デッキ選択と同じ全画面モーダル
+	// レイヤー方式で、ランダム+5色の6択から選ぶ。
+	UFUNCTION()
+	void HandleOpenAIDeckSelectClicked();
+
+	UFUNCTION()
+	void HandleCloseAIDeckSelectClicked();
+
+	// UCGDeckListRowWidget::OnSelectClickedから、押された行のインデックスが
+	// 渡される。0=ランダム、1以上はGetBasicDeckColors()のインデックス+1
+	// (HandleAIDeckSelectRowSelected参照)。
+	UFUNCTION()
+	void HandleAIDeckSelectRowSelected(int32 SlotIndex);
+
 	UFUNCTION()
 	void HandleOpenCodexClicked();
 
@@ -182,6 +197,19 @@ private:
 
 	// GameInstance::SavedDecksの内容でDeckSelectListContainerの中身を作り直す。
 	void RefreshDeckSelectList();
+
+	// 対戦相手(AI)デッキ選択。デッキ選択(自分用)と同じ全画面モーダルレイヤー
+	// 方式だが、保存済みデッキの概念は無く「ランダム+5色」の固定6択のみ
+	// (docs/architecture.md「デッキの永続化」の`SelectedAIOpponentColor`参照)。
+	UPROPERTY()
+	TObjectPtr<UBorder> AIDeckSelectLayer;
+
+	UPROPERTY()
+	TObjectPtr<UVerticalBox> AIDeckSelectListContainer;
+
+	// GameInstance::SelectedAIOpponentColorの内容でAIDeckSelectListContainerの
+	// 中身(ランダム+5色、現在選択中のものをハイライト)を作り直す。
+	void RefreshAIDeckSelectList();
 
 	// オンライン対戦(ホスト/参加)の全画面モーダルレイヤー(docs/online-play-
 	// design.md「ロビー画面の変更点」)。カード図鑑・遊び方・デッキ選択と同じ方式。

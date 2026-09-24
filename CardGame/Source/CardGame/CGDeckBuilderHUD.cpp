@@ -29,7 +29,7 @@ namespace
 	// 重複可に変更。
 	constexpr int32 RequiredDeckSize = 25;
 	constexpr int32 MaxCopiesPerCard = 3;
-	const TCHAR* LobbyLevelPath = TEXT("/Game/CardGame/Maps/L_Lobby");
+	const TCHAR* DeckBuilderLobbyLevelPath = TEXT("/Game/CardGame/Maps/L_Lobby");
 
 	// カード一覧(下段)の表示縮小率。通常表示/コンパクト表示切り替え用
 	// (「カードが増えたときの工夫」フィードバックのため。docs/architecture.md
@@ -38,7 +38,7 @@ namespace
 	constexpr float PoolDisplayScaleNormal = 0.6f;
 	constexpr float PoolDisplayScaleCompact = 0.4f;
 
-	void AddSectionHeader(UWidgetTree* WidgetTree, UVerticalBox* Root, const TCHAR* Name, const FString& Text)
+	void AddDeckBuilderSectionHeader(UWidgetTree* WidgetTree, UVerticalBox* Root, const TCHAR* Name, const FString& Text)
 	{
 		UTextBlock* Header = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), Name);
 		Header->SetText(FText::FromString(Text));
@@ -52,7 +52,7 @@ namespace
 	// カードはカーソルを乗せると拡大プレビューが表示されるが、それは最前面の専用レイヤーに
 	// 複製されて描かれるため(UCGCardHostWidget)、行のレイアウト自体は拡大分の余白を
 	// 確保する必要がない。カード同士の間隔は見た目用の小さな固定値だけで良い。
-	const float CardGap = 6.f;
+	const float DeckBuilderCardGap = 6.f;
 
 	UHorizontalBox* MakeScrollableRow(UWidgetTree* WidgetTree, UVerticalBox* Root, const TCHAR* Name)
 	{
@@ -218,10 +218,10 @@ void UCGDeckBuilderHUD::EnsureWidgetTreeBuilt()
 
 	// シャドウバースのデッキ編成画面を参考に、上段=今のデッキ、下段=選べるカード一覧、
 	// という2段構成にしている(タップで上下を行き来する)。
-	AddSectionHeader(WidgetTree, Root, TEXT("DeckRowHeader"), TEXT("あなたのデッキ(タップで外す)"));
+	AddDeckBuilderSectionHeader(WidgetTree, Root, TEXT("DeckRowHeader"), TEXT("あなたのデッキ(タップで外す)"));
 	DeckRowBox = MakeScrollableRow(WidgetTree, Root, TEXT("DeckRowBox"));
 
-	AddSectionHeader(WidgetTree, Root, TEXT("PoolRowHeader"), TEXT("カード一覧(タップで追加)"));
+	AddDeckBuilderSectionHeader(WidgetTree, Root, TEXT("PoolRowHeader"), TEXT("カード一覧(タップで追加)"));
 
 	// カード一覧の検索/フィルタ/並び替え/表示切り替え。カードの種類・種族・タイプが
 	// 今後増えていく前提で、一覧から目的のカードを見つけやすくするために用意している
@@ -392,7 +392,7 @@ void UCGDeckBuilderHUD::RefreshUI()
 		if (UHorizontalBoxSlot* CardSlot = DeckRowBox->AddChildToHorizontalBox(SlotWidget))
 		{
 			CardSlot->SetVerticalAlignment(VAlign_Center);
-			CardSlot->SetPadding(FMargin(CardGap, 0.f));
+			CardSlot->SetPadding(FMargin(DeckBuilderCardGap, 0.f));
 		}
 	}
 
@@ -432,7 +432,7 @@ void UCGDeckBuilderHUD::RefreshPoolList()
 	if (FilterSortState.SortMode != ECGCardSortMode::Tribe)
 	{
 		UWrapBox* Wrap = WidgetTree->ConstructWidget<UWrapBox>(UWrapBox::StaticClass(), TEXT("PoolWrap"));
-		Wrap->SetInnerSlotPadding(FVector2D(0.f, CardGap * 2.f));
+		Wrap->SetInnerSlotPadding(FVector2D(0.f, DeckBuilderCardGap * 2.f));
 		PoolListContainer->AddChildToVerticalBox(Wrap);
 
 		for (const FCGCardDef& Def : Filtered)
@@ -469,7 +469,7 @@ void UCGDeckBuilderHUD::RefreshPoolList()
 
 			CurrentWrap = WidgetTree->ConstructWidget<UWrapBox>(UWrapBox::StaticClass(),
 				*FString::Printf(TEXT("PoolGroupWrap_%d"), GroupIndex));
-			CurrentWrap->SetInnerSlotPadding(FVector2D(0.f, CardGap * 2.f));
+			CurrentWrap->SetInnerSlotPadding(FVector2D(0.f, DeckBuilderCardGap * 2.f));
 			PoolListContainer->AddChildToVerticalBox(CurrentWrap);
 		}
 
@@ -499,7 +499,7 @@ void UCGDeckBuilderHUD::AddPoolCardToWrap(UWrapBox* Wrap, const FCGCardDef& Def,
 	UWidget* WrapChild = UCGCardSlotWidget::WrapForCompactDisplay(WidgetTree, SlotWidget, DisplayScale);
 	if (UWrapBoxSlot* CardSlot = Wrap->AddChildToWrapBox(WrapChild))
 	{
-		CardSlot->SetPadding(FMargin(CardGap));
+		CardSlot->SetPadding(FMargin(DeckBuilderCardGap));
 	}
 }
 
@@ -578,12 +578,12 @@ void UCGDeckBuilderHUD::HandleSaveClicked()
 		UE_LOG(LogCardGame, Error, TEXT("UCGDeckBuilderHUD::HandleSaveClicked: GameInstance is not UCGGameInstance"));
 	}
 
-	UGameplayStatics::OpenLevel(this, FName(LobbyLevelPath));
+	UGameplayStatics::OpenLevel(this, FName(DeckBuilderLobbyLevelPath));
 }
 
 void UCGDeckBuilderHUD::HandleBackClicked()
 {
-	UGameplayStatics::OpenLevel(this, FName(LobbyLevelPath));
+	UGameplayStatics::OpenLevel(this, FName(DeckBuilderLobbyLevelPath));
 }
 
 void UCGDeckBuilderHUD::HandleSearchTextChanged(const FText& NewText)

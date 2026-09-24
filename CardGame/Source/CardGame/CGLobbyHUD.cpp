@@ -35,7 +35,7 @@ namespace
 	const TCHAR* BattleLevelPath = TEXT("/Game/CardGame/Maps/L_Card_GamePrototype");
 	const TCHAR* DeckBuilderLevelPath = TEXT("/Game/CardGame/Maps/L_DeckBuilder");
 
-	const float CardGap = 6.f;
+	const float LobbyCardGap = 6.f;
 
 	// カード図鑑の一覧表示縮小率。全画面レイヤーで表示スペースに余裕があるため
 	// デッキ構築画面の一覧と同じ値にしている(docs/architecture.md「カードUIの設計」)。
@@ -149,6 +149,9 @@ void UCGLobbyHUD::EnsureWidgetTreeBuilt()
 
 	UButton* DeckSelectButton = MakeMenuButton(WidgetTree, TEXT("DeckSelectButton"), TEXT("デッキ選択"), Root);
 	DeckSelectButton->OnClicked.AddDynamic(this, &UCGLobbyHUD::HandleOpenDeckSelectClicked);
+
+	UButton* AIDeckSelectButton = MakeMenuButton(WidgetTree, TEXT("AIDeckSelectButton"), TEXT("対戦相手デッキ"), Root);
+	AIDeckSelectButton->OnClicked.AddDynamic(this, &UCGLobbyHUD::HandleOpenAIDeckSelectClicked);
 
 	UButton* StartBattleButton = MakeMenuButton(WidgetTree, TEXT("StartBattleButton"), TEXT("バトル開始"), Root);
 	StartBattleButton->OnClicked.AddDynamic(this, &UCGLobbyHUD::HandleStartBattleClicked);
@@ -393,6 +396,59 @@ void UCGLobbyHUD::EnsureWidgetTreeBuilt()
 		DeckSelectBodySlot->SetPadding(FMargin(24.f, 8.f));
 	}
 
+	// 対戦相手(AI)デッキ選択: デッキ選択(自分用)と同じ全画面モーダルレイヤー
+	// 方式(「CPUと対戦するときに相手のデッキを選べるようにしてほしい」という
+	// フィードバックへの対応)。保存済みデッキの概念が無い分、構造はデッキ選択の
+	// 簡略版になっている。
+	AIDeckSelectLayer = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("AIDeckSelectLayer"));
+	AIDeckSelectLayer->SetBrushColor(FLinearColor(0.05f, 0.05f, 0.05f, 0.98f));
+	AIDeckSelectLayer->SetHorizontalAlignment(HAlign_Fill);
+	AIDeckSelectLayer->SetVerticalAlignment(VAlign_Fill);
+	AIDeckSelectLayer->SetVisibility(ESlateVisibility::Collapsed);
+
+	UVerticalBox* AIDeckSelectRoot = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("AIDeckSelectRoot"));
+	AIDeckSelectLayer->AddChild(AIDeckSelectRoot);
+
+	UHorizontalBox* AIDeckSelectHeaderRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("AIDeckSelectHeaderRow"));
+	if (UVerticalBoxSlot* AIDeckSelectHeaderRowSlot = AIDeckSelectRoot->AddChildToVerticalBox(AIDeckSelectHeaderRow))
+	{
+		AIDeckSelectHeaderRowSlot->SetPadding(FMargin(24.f, 16.f, 24.f, 4.f));
+	}
+
+	UTextBlock* AIDeckSelectTitle = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("AIDeckSelectTitle"));
+	AIDeckSelectTitle->SetText(FText::FromString(TEXT("対戦相手デッキ")));
+	AIDeckSelectTitle->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 28));
+	if (UHorizontalBoxSlot* AIDeckSelectTitleSlot = AIDeckSelectHeaderRow->AddChildToHorizontalBox(AIDeckSelectTitle))
+	{
+		AIDeckSelectTitleSlot->SetVerticalAlignment(VAlign_Center);
+		AIDeckSelectTitleSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+	}
+
+	UButton* CloseAIDeckSelectButton = MakeSmallButton(WidgetTree, TEXT("CloseAIDeckSelectButton"), TEXT("閉じる"), AIDeckSelectHeaderRow);
+	CloseAIDeckSelectButton->OnClicked.AddDynamic(this, &UCGLobbyHUD::HandleCloseAIDeckSelectClicked);
+
+	USizeBox* AIDeckSelectBodySizeBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("AIDeckSelectBodySizeBox"));
+	AIDeckSelectBodySizeBox->SetMaxDesiredWidth(600.f);
+
+	UScrollBox* AIDeckSelectScroll = WidgetTree->ConstructWidget<UScrollBox>(UScrollBox::StaticClass(), TEXT("AIDeckSelectScroll"));
+	AIDeckSelectScroll->SetOrientation(EOrientation::Orient_Vertical);
+
+	AIDeckSelectListContainer = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("AIDeckSelectListContainer"));
+	AIDeckSelectScroll->AddChild(AIDeckSelectListContainer);
+
+	if (USizeBoxSlot* AIDeckSelectScrollSlot = Cast<USizeBoxSlot>(AIDeckSelectBodySizeBox->AddChild(AIDeckSelectScroll)))
+	{
+		AIDeckSelectScrollSlot->SetHorizontalAlignment(HAlign_Fill);
+		AIDeckSelectScrollSlot->SetVerticalAlignment(VAlign_Fill);
+	}
+
+	if (UVerticalBoxSlot* AIDeckSelectBodySlot = AIDeckSelectRoot->AddChildToVerticalBox(AIDeckSelectBodySizeBox))
+	{
+		AIDeckSelectBodySlot->SetHorizontalAlignment(HAlign_Center);
+		AIDeckSelectBodySlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+		AIDeckSelectBodySlot->SetPadding(FMargin(24.f, 8.f));
+	}
+
 	// オンライン対戦(ホスト/参加): カード図鑑・遊び方・デッキ選択と同じ全画面
 	// モーダルレイヤー方式(docs/online-play-design.md「ロビー画面の変更点」)。
 	OnlineLayer = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("OnlineLayer"));
@@ -542,6 +598,11 @@ void UCGLobbyHUD::EnsureWidgetTreeBuilt()
 		DeckSelectStackSlot->SetHorizontalAlignment(HAlign_Fill);
 		DeckSelectStackSlot->SetVerticalAlignment(VAlign_Fill);
 	}
+	if (UOverlaySlot* AIDeckSelectStackSlot = ModalStack->AddChildToOverlay(AIDeckSelectLayer))
+	{
+		AIDeckSelectStackSlot->SetHorizontalAlignment(HAlign_Fill);
+		AIDeckSelectStackSlot->SetVerticalAlignment(VAlign_Fill);
+	}
 	if (UOverlaySlot* OnlineStackSlot = ModalStack->AddChildToOverlay(OnlineLayer))
 	{
 		OnlineStackSlot->SetHorizontalAlignment(HAlign_Fill);
@@ -677,6 +738,65 @@ void UCGLobbyHUD::HandleDeckSelectRowDeleted(int32 SlotIndex)
 	RefreshDeckSelectList();
 }
 
+void UCGLobbyHUD::HandleOpenAIDeckSelectClicked()
+{
+	AIDeckSelectLayer->SetVisibility(ESlateVisibility::Visible);
+	RefreshAIDeckSelectList();
+}
+
+void UCGLobbyHUD::HandleCloseAIDeckSelectClicked()
+{
+	AIDeckSelectLayer->SetVisibility(ESlateVisibility::Collapsed);
+}
+
+void UCGLobbyHUD::RefreshAIDeckSelectList()
+{
+	AIDeckSelectListContainer->ClearChildren();
+
+	UCGGameInstance* GI = GetCGGameInstance();
+	if (!GI)
+	{
+		return;
+	}
+
+	// 行インデックスは0=ランダム、1以上はGetBasicDeckColors()のインデックス+1
+	// (HandleAIDeckSelectRowSelected参照)。「(25枚)」はランダムでも実際に選ばれる
+	// デッキが必ず25枚になることを表すためにそのまま表示する。
+	UCGDeckListRowWidget* RandomRow = CreateWidget<UCGDeckListRowWidget>(GetWorld(), UCGDeckListRowWidget::StaticClass());
+	RandomRow->SetRowData(0, TEXT("ランダム(5色から抽選)"), 25, GI->SelectedAIOpponentColor == ECGColor::None, /*bAllowDelete=*/false);
+	RandomRow->OnSelectClicked.AddDynamic(this, &UCGLobbyHUD::HandleAIDeckSelectRowSelected);
+	if (UVerticalBoxSlot* RandomRowSlot = AIDeckSelectListContainer->AddChildToVerticalBox(RandomRow))
+	{
+		RandomRowSlot->SetPadding(FMargin(0.f, 3.f));
+	}
+
+	const TArray<TPair<ECGColor, FString>>& BasicColors = GetBasicDeckColors();
+	for (int32 i = 0; i < BasicColors.Num(); ++i)
+	{
+		const ECGColor Color = BasicColors[i].Key;
+		const bool bIsActive = (GI->SelectedAIOpponentColor == Color);
+		UCGDeckListRowWidget* Row = CreateWidget<UCGDeckListRowWidget>(GetWorld(), UCGDeckListRowWidget::StaticClass());
+		Row->SetRowData(i + 1, BasicColors[i].Value, UCGCardDatabase::GetBasicColorDeckCardIds(Color).Num(), bIsActive, /*bAllowDelete=*/false);
+		Row->OnSelectClicked.AddDynamic(this, &UCGLobbyHUD::HandleAIDeckSelectRowSelected);
+		if (UVerticalBoxSlot* RowSlot = AIDeckSelectListContainer->AddChildToVerticalBox(Row))
+		{
+			RowSlot->SetPadding(FMargin(0.f, 3.f));
+		}
+	}
+}
+
+void UCGLobbyHUD::HandleAIDeckSelectRowSelected(int32 SlotIndex)
+{
+	if (UCGGameInstance* GI = GetCGGameInstance())
+	{
+		const TArray<TPair<ECGColor, FString>>& BasicColors = GetBasicDeckColors();
+		GI->SelectedAIOpponentColor = (SlotIndex == 0 || !BasicColors.IsValidIndex(SlotIndex - 1))
+			? ECGColor::None
+			: BasicColors[SlotIndex - 1].Key;
+	}
+	RefreshAIDeckSelectList();
+}
+
 void UCGLobbyHUD::HandleOpenCodexClicked()
 {
 	CodexLayer->SetVisibility(ESlateVisibility::Visible);
@@ -713,7 +833,7 @@ void UCGLobbyHUD::RefreshCodexList()
 	if (FilterSortState.SortMode != ECGCardSortMode::Tribe)
 	{
 		UWrapBox* Wrap = WidgetTree->ConstructWidget<UWrapBox>(UWrapBox::StaticClass(), TEXT("CodexWrap"));
-		Wrap->SetInnerSlotPadding(FVector2D(0.f, CardGap * 2.f));
+		Wrap->SetInnerSlotPadding(FVector2D(0.f, LobbyCardGap * 2.f));
 		CodexListContainer->AddChildToVerticalBox(Wrap);
 
 		for (const FCGCardDef& Def : Filtered)
@@ -749,7 +869,7 @@ void UCGLobbyHUD::RefreshCodexList()
 
 			CurrentWrap = WidgetTree->ConstructWidget<UWrapBox>(UWrapBox::StaticClass(),
 				*FString::Printf(TEXT("CodexGroupWrap_%d"), GroupIndex));
-			CurrentWrap->SetInnerSlotPadding(FVector2D(0.f, CardGap * 2.f));
+			CurrentWrap->SetInnerSlotPadding(FVector2D(0.f, LobbyCardGap * 2.f));
 			CodexListContainer->AddChildToVerticalBox(CurrentWrap);
 		}
 
@@ -770,7 +890,7 @@ void UCGLobbyHUD::AddCodexCardToWrap(UWrapBox* Wrap, const FCGCardDef& Def)
 	UWidget* WrapChild = UCGCardSlotWidget::WrapForCompactDisplay(WidgetTree, SlotWidget, DisplayScale);
 	if (UWrapBoxSlot* CardSlot = Wrap->AddChildToWrapBox(WrapChild))
 	{
-		CardSlot->SetPadding(FMargin(CardGap));
+		CardSlot->SetPadding(FMargin(LobbyCardGap));
 	}
 }
 

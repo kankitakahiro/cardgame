@@ -41,8 +41,10 @@ public:
 	static TArray<FName> GetStarterDeckCardIds();
 
 	// 色ごとの基本デッキ(25枚、当該色のパッシブしきい値(17/25)を満たす純色構成。
-	// docs/next-ruleset-cards-v1.md「サンプルデッキ」参照)。対戦AI(Side1)がこの中からランダムに
-	// 1色を選んで使う(ACGGameMode::InitializeMatch())。Colorに`None`を渡すと空配列を返す。
+	// docs/next-ruleset-cards-v1.md「サンプルデッキ」参照)。対戦AI(Side1)は
+	// ロビーの「対戦相手デッキ」画面で選んだ色を使い、未選択ならこの中から
+	// ランダムに1色選ぶ(`UCGGameInstance::SelectedAIOpponentColor`、
+	// `ACGGameMode::InitializeMatch()`参照)。Colorに`None`を渡すと空配列を返す。
 	UFUNCTION(BlueprintPure, Category = "CardGame|Cards")
 	static TArray<FName> GetBasicColorDeckCardIds(ECGColor Color);
 
