@@ -34,6 +34,14 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "CardGame")
 	FString ActiveDeckName;
 
+	// 対戦相手(AI、Side1)が使うデッキの色。ECGColor::Noneなら5色からランダムに
+	// 選ぶ(以前からの既定挙動)。ロビーの「対戦相手デッキ」画面(UCGLobbyHUD)で
+	// 選び、ACGGameMode::InitializeMatch()がここを読んでAI側のデッキを決める。
+	// PlayerDeckCardIdsと違い、ディスクへは永続化しない(アプリを再起動する
+	// たびにランダムへ戻ってよいという判断)。
+	UPROPERTY(BlueprintReadWrite, Category = "CardGame")
+	ECGColor SelectedAIOpponentColor = ECGColor::None;
+
 	// DeckNameで保存する(空文字なら仮の名前を付ける)。既存の同名デッキが
 	// あれば上書き、無ければ新規追加する。保存したデッキはそのままアクティブ
 	// (PlayerDeckCardIds)にし、ディスクへ永続化する。

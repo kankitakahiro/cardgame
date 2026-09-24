@@ -5,17 +5,34 @@ Unreal Engine 5.8上のカードゲーム実装(`CardGame/Source/CardGame/`)の�
 機能実装計画)は完了後に削除する運用のため、そこで確定した設計のうち今後も
 価値のある部分はここに集約している。
 
-実装上の技術的な制約・落とし穴(UMGのRebuildWidgetの罠、Python自動化の限界等)
-は [automation-notes.md](automation-notes.md) を参照。ルール仕様・色ごとの
-特徴は[game-rules-minimum.md](game-rules-minimum.md)、設計意図は
-[next-ruleset-design.md](next-ruleset-design.md)、カード一覧は
-[next-ruleset-cards-v1.md](next-ruleset-cards-v1.md)、カードバランス調整の
-経緯・実測データは[next-ruleset-simulation-v1.md](next-ruleset-simulation-v1.md)
-を参照([initial-cards-v0.1.md](initial-cards-v0.1.md) は旧24種、フォールバック用
-データの参考)。オンライン対戦の設計は[online-play-design.md](online-play-design.md)、
-実装済みの技術的判断は本ドキュメントの「オンライン対戦移行時の実装メモ」を参照
-(実装計画だった`online-play-plan.md`は完了に伴い削除し、価値のある内容はここへ
-移した)。
+## ドキュメント構成
+
+`docs/`配下は主に次の5つの観点でまとめている。同じ内容を複数箇所に書かない
+方針のため、各ドキュメントは基本的にそれぞれの観点の**唯一の定義元**になる。
+
+| 観点 | ドキュメント |
+|---|---|
+| ゲームのルール | [game-rules-minimum.md](game-rules-minimum.md)(現行実装の仕様一式) |
+| カードの効果 | [next-ruleset-cards-v1.md](next-ruleset-cards-v1.md)(5色76種+無色24種の全カードリスト) |
+| ゲームの世界観 | [カードゲーム 世界観・フレーバー設定.md](<カードゲーム 世界観・フレーバー設定.md>)(舞台設定・色ごとの国・カードのフレーバーテキスト例) |
+| ゲームの演出 | [presentation.md](presentation.md)(攻撃/カードプレイ/勝敗の演出、行動ログ等のHUDフィードバック) |
+| ゲームのキーワード | [keywords.md](keywords.md)(疾駆/庇護/封印/変貌/先物の定義一覧) |
+
+上記は「今のゲームがどうなっているか」を表す現在地のドキュメント。ルール設計の
+壁打ち経緯(next-ruleset-design.md)とカードバランス調整の実測ログ
+(next-ruleset-simulation-v1.md)は、内容が上記の現在地ドキュメントへ反映済みで
+読み返す機会も無くなったため削除した。[initial-cards-v0.1.md](initial-cards-v0.1.md)
+だけは旧ルール(初期デッキ12枚時代)のカード24種が今も「無色」カードプールの
+元データとして`BuildLegacyCards()`から参照される現役データのため残している。
+
+その他、開発環境固有の技術メモは以下を参照。
+
+- 実装上の技術的な制約・落とし穴(UMGのRebuildWidgetの罠、Python自動化の限界等):
+  [automation-notes.md](automation-notes.md)
+- オンライン対戦の設計: [online-play-design.md](online-play-design.md)
+  (実装済みの技術的判断は本ドキュメントの「オンライン対戦移行時の実装メモ」を
+  参照。実装計画だった`online-play-plan.md`は完了に伴い削除し、価値のある内容は
+  ここへ移した)
 
 ## 全体構成
 
@@ -35,7 +52,7 @@ L_Lobby ──(デッキ構築)──> L_DeckBuilder ──(保存)──> L_Lob
 
 | レベル | GameMode | HUD | 役割 |
 |---|---|---|---|
-| `L_Lobby` | `ACGLobbyGameMode` | `UCGLobbyHUD` | 「デッキ構築」「デッキ選択」「バトル開始」「カード図鑑」「遊び方」。デッキ選択/カード図鑑/遊び方はレベル遷移を伴わない全画面モーダルレイヤー(下記) |
+| `L_Lobby` | `ACGLobbyGameMode` | `UCGLobbyHUD` | 「デッキ構築」「デッキ選択」「対戦相手デッキ」「バトル開始」「カード図鑑」「遊び方」。デッキ選択/対戦相手デッキ/カード図鑑/遊び方はレベル遷移を伴わない全画面モーダルレイヤー(下記) |
 | `L_DeckBuilder` | `ACGDeckBuilderGameMode` | `UCGDeckBuilderHUD` | 76種(次期ルール)から25枚(同名カード3枚まで重複可)を選ぶデッキ編成画面 |
 | `L_Card_GamePrototype` | `ACGGameMode` | `UCGGameHUD` | 対人1vsAI1の対戦本編 |
 
@@ -63,6 +80,15 @@ L_Lobby ──(デッキ構築)──> L_DeckBuilder ──(保存)──> L_Lob
   `UCGGameInstance::Init()`で起動時に読み込む。1件も無い(初回起動、または
   25枚固定ルールに反する壊れたデータを除外した結果0件)場合はスターター
   デッキを自動生成する。
+- `UCGGameInstance::SelectedAIOpponentColor`(`ECGColor`): 対戦相手(AI、Side1)が
+  使うデッキの色(「CPUと対戦するときに相手のデッキを選べるようにしてほしい」
+  というフィードバックへの対応)。`UCGLobbyHUD`の「対戦相手デッキ」画面(デッキ
+  選択と同じ全画面モーダルレイヤー方式だが、保存済みデッキの概念は無く
+  「ランダム+5色」の固定6択のみ)で選ぶとその場で直接この値が更新される。
+  既定値`ECGColor::None`は「ランダム」を表し、`ACGGameMode::InitializeMatch()`
+  はこれが`None`のときだけ以前と同じ5色ランダム抽選にフォールバックする。
+  `PlayerDeckCardIds`と違いディスクへは永続化しない(アプリ再起動のたびに
+  ランダムへ戻ってよいという判断)。
 
 ## 対戦ロジックのクラス責務
 
@@ -113,8 +139,7 @@ L_Lobby ──(デッキ構築)──> L_DeckBuilder ──(保存)──> L_Lob
   というデータのみで表現し、`CGTransformConditionId`(`CGTypes.h`)の6種類の
   条件を`ACGPlayerState`側(`ApplyTransformIfConditionMet`/`OnTurnStartTransformTick`/
   `CheckAllTransforms`)が汎用的に判定する。カードごとにHandle_XXX関数を書く
-  必要がなく、カードを増やす場合もデータ追加のみで済む
-  (docs/next-ruleset-design.md「変貌の詳細ルール」)。
+  必要がなく、カードを増やす場合もデータ追加のみで済む。
 - 同様に、ターン開始時に判定する常在効果は`ACGPlayerState::ApplyOnTurnStartAuraEffects()`
   が場のUnitを走査してEffectId(`OnTurnStartDraw`等)で判定する、
   `FEndTurnAuraEffectHandler`と対になる仕組み(`ACGGameMode::StartTurn()`から呼ぶ)。
@@ -132,7 +157,7 @@ L_Lobby ──(デッキ構築)──> L_DeckBuilder ──(保存)──> L_Lob
 | フィールド | 用途 |
 |---|---|
 | `CardId`/`CardName`/`CardType`/`Cost`/`Atk`/`Hp` | 基本情報 |
-| `Color` | 次期ルールの色(`ECGColor`、Red/Orange/Green/Blue/Purple)。旧24種は`None`のまま(docs/next-ruleset-design.md「色システム」) |
+| `Color` | 次期ルールの色(`ECGColor`、Red/Orange/Green/Blue/Purple)。旧24種は`None`のまま(game-rules-minimum.md「色ガイド」参照) |
 | `Description` | 効果テキスト(UI表示用) |
 | `Tribe` | 部族/系統(例: 戦士、アンデッド)。**将来のシナジー効果実装を見込んだ予約フィールド**で、現状は参照するロジックが無く、UI表示と一部カードのサンプル値のみ |
 | `FlavorText` | カード下部の短いフレーバーテキスト(世界観演出用、UI表示のみ) |
@@ -323,8 +348,6 @@ Z順序で前面へ出す簡単な方法がない。そのため拡大表示は�
   制約自体は解消済み。あとは「Unit登場時にN枚ドローする」汎用ハンドラを1つ
   追加してP12TのEffectIdに割り当てるだけで実装できる状態(未着手)。
   P15Tの登場時効果(顔面2ダメージ、`CGEffectId::OnPlayDamageFace`)は実装済み。
-- カードバランスの調整状況は[next-ruleset-simulation-v1.md](next-ruleset-simulation-v1.md)
-  を参照。
 
 ## オンライン対戦移行時の実装メモ
 
