@@ -190,14 +190,8 @@ public:
 	UPROPERTY(BlueprintReadOnly, Replicated, Category = "CardGame")
 	bool bPurplePassiveUsedThisTurn = false;
 
-	// 先物キーワード用: 次の購入1回だけ適用される追加割引。使うと0に戻る
-	// (docs/game-rules-minimum.md「橙」)。
-	UPROPERTY(BlueprintReadOnly, Replicated, Category = "CardGame")
-	int32 NextPurchaseDiscount = 0;
-
 	// P11予見の魔導師用: 次に自分がプレイするUnit1体のコストに適用される割引。
-	// 使うと0に戻る(NextPurchaseDiscountと同じ考え方。docs/architecture.md
-	// 「次期ルール移行時の実装メモ」参照)。
+	// 使うと0に戻る(docs/architecture.md「次期ルール移行時の実装メモ」参照)。
 	UPROPERTY(BlueprintReadOnly, Replicated, Category = "CardGame")
 	int32 NextUnitPlayDiscount = 0;
 
@@ -312,6 +306,16 @@ public:
 	// (見習い召集の「1/1トークンを出す」等、実在カードではないユニットの生成に使う)。
 	void AddBoardUnitDirect(FName CardId, int32 Atk, int32 Hp, bool bCanAttackImmediately, bool bHasGuard);
 
+	// マーケットからUnit1枚を選び、コストを支払わずそのまま場に出す選択を開始する
+	// (O15独占商人、FIN_ORANGE黄金の帝王で使用)。RemainingRepeatsを渡すと、
+	// この選択が解決された直後にACGGameMode::ResolvePendingChoiceWithCard側で
+	// 同じ選択が続けて開始される(黄金の帝王のように複数枚を1枚ずつ選ばせる場合に
+	// 使う。docs/next-ruleset-cards-v1.md「橙」。「プレイヤーがマーケットのカードを
+	// 選択して無料でプレイできるカードを選びたい」というフィードバックへの対応で、
+	// 以前はO15と違いプレイヤーに選ばせず自動で3枚デプロイしていた)。候補が
+	// 無ければ何もしない(選択待ちには入らない)。
+	void BeginMarketDeployChoice(ACGGameState* CGState, int32 MaxCost, int32 RemainingRepeats);
+
 	// 封印(青、docs/game-rules-minimum.md): 対象ユニットを墓地に送らず場から
 	// 完全に取り除く(死亡時効果も発動しない、追放の扱い)。取り除いたユニットの
 	// (変貌前の)コストをOutSealedCostへ返す。
@@ -376,6 +380,20 @@ public:
 	// 封印など)。Opponentは敵Unitを対象にする効果(B14)のために渡す。
 	void ApplyOnTurnStartAuraEffects(ACGPlayerState* Opponent);
 
+	// 分身(緑、docs/next-ruleset-cards-v1.md「緑」)。場の全ユニットについて、
+	// 分身条件が満たされていれば分身させる(味方Unit数条件のような進行度を
+	// 伴わない条件の再判定用。ACGGameMode::NotifyStateChangedから毎回呼ぶことで、
+	// 場のUnit数が変わるあらゆる操作の後に再判定される)。SurvivedAttack/
+	// AttackedAndSurvived/LeaderHealedはCGGameMode側で該当イベント発生時に
+	// CloneProgressを+1してから、この関数(経由でNotifyStateChanged)が実際の
+	// 分身を成立させる。
+	void CheckAllClones(ACGPlayerState* Opponent, ACGGameState* CGState);
+
+	// 自分のリーダーが回復した直後に呼ぶ(Heal()の全呼び出し元から)。分身条件
+	// LeaderHealedを持つ場の全ユニットのCloneProgressを+1する(実際の分身は
+	// 後続のCheckAllClonesが行う)。
+	void NotifyOwnLeaderHealed();
+
 private:
 	void ResolveSpellEffect(const FCGCardDef& Def, ACGPlayerState* Opponent, int32 TargetUnitIndex, ACGGameState* CGState);
 	// CGStateを受け取るのは、選択式カード効果(docs/architecture.md「選択待ち(PendingChoice)の仕組み」)で
@@ -404,4 +422,14 @@ private:
 	// 専用の分岐を書く必要はなく、他のUnitと同じ手順(CGTypes.hにEffectId定数を
 	// 追加しHandle_XXXをテーブル登録する)だけで済む。
 	void PerformTransform(FCGBoardUnit& Unit, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState);
+
+	// Unit1体について分身条件(CloneConditionId、docs/next-ruleset-cards-v1.md「緑」)を
+	// 判定し、満たしていて未発動なら分身させる。判定はGetCloneConditionPredicates()の
+	// テーブルに委譲しているため、新しい条件を増やす場合はテーブルに1行足すだけでよい。
+	void ApplyCloneIfConditionMet(FCGBoardUnit& Unit, ACGPlayerState* Opponent, ACGGameState* CGState);
+
+	// 実際に分身を適用する(このユニットをbHasCloned済みにし、素の基本ステータス・
+	// キーワード無しのコピーをトークンとして場に追加、コピー自身の登場時効果を
+	// 通常のUnit登場時効果ハンドラで解決する。docs/next-ruleset-cards-v1.md「緑」)。
+	void PerformClone(FCGBoardUnit& Unit, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState);
 };

@@ -905,6 +905,29 @@ bool ACGGameMode::ExecuteAttack(int32 AttackerSideIndex, int32 AttackerUnitIndex
 		{
 			++Defender->BoardUnits[TargetUnitIndex].TransformProgress;
 		}
+
+		// 分身(緑)のSurvivedAttack条件用: 被弾して生き残った進行度を+1する
+		// (docs/next-ruleset-cards-v1.md「緑」G03熊の盾持ち)。実際の分身は
+		// この後のNotifyStateChanged()内のCheckAllClonesが成立させる。
+		if (Defender->BoardUnits[TargetUnitIndex].Hp > 0
+			&& TargetDef.CloneConditionId == FName(CGCloneConditionId::SurvivedAttack))
+		{
+			++Defender->BoardUnits[TargetUnitIndex].CloneProgress;
+		}
+
+		// 分身(緑)のAttackedAndSurvived条件用: 攻撃して(反撃を受けて)生き残った
+		// 進行度を+1する(docs/next-ruleset-cards-v1.md「緑」G13森の巨人)。顔面への
+		// 攻撃は反撃が発生せず常に「生き残る」ため対象外にしている(このブロックは
+		// 対象がUnitのときだけ実行される)。
+		if (Attacker->BoardUnits[AttackerUnitIndex].Hp > 0)
+		{
+			FCGCardDef AttackerCloneDef;
+			if (UCGCardDatabase::FindCard(Attacker->BoardUnits[AttackerUnitIndex].CardId, AttackerCloneDef)
+				&& AttackerCloneDef.CloneConditionId == FName(CGCloneConditionId::AttackedAndSurvived))
+			{
+				++Attacker->BoardUnits[AttackerUnitIndex].CloneProgress;
+			}
+		}
 	}
 	else
 	{
@@ -1227,6 +1250,18 @@ bool ACGGameMode::ResolvePendingChoiceWithCard(int32 SideIndex, FName ChosenCard
 	{
 		CompleteEndTurn(SideIndex);
 	}
+	else if (Choice.ChoiceType == ECGChoiceType::MarketCard
+		&& Choice.EffectId == FName(CGEffectId::OnPlayDeployFromMarketFree)
+		&& Choice.RemainingRepeats > 0)
+	{
+		// 黄金の帝王(FIN_ORANGE)のように複数枚を1枚ずつ選ばせる効果の続き
+		// (docs/next-ruleset-cards-v1.md「橙」)。候補が無ければ
+		// BeginMarketDeployChoice内で何もせず終わる(選択待ちに入らない)。
+		// AI側の連続選択もここから継続する必要があるため、新しい選択待ちに
+		// 対しても改めてAutoResolveChoiceIfAI()を呼ぶ。
+		Side->BeginMarketDeployChoice(CGState, Choice.MaxCost, Choice.RemainingRepeats - 1);
+		AutoResolveChoiceIfAI();
+	}
 
 	CheckWinLose();
 	NotifyStateChanged();
@@ -1425,6 +1460,25 @@ bool ACGGameMode::ResolvePendingChoiceSealTarget(int32 SideIndex, int32 ChosenUn
 		return true;
 	}
 
+	// G11(新)群れの猛攻: 自分の場のUnit数だけダメージ(デバフではなく実ダメージ。
+	// Atkは変えずHpだけ減らす。docs/next-ruleset-cards-v1.md「緑」)。
+	if (Choice.EffectId == FName(CGEffectId::OnPlayDamageTargetByAllyUnitCount))
+	{
+		Opponent->ApplyDamageToUnit(ChosenUnitIndex, Choice.PendingDamageAmount);
+
+		const int32 DeathDraws = Opponent->RemoveDeadUnitsAndGetDeathDrawCount(Side, CGState);
+		for (int32 i = 0; i < DeathDraws; ++i)
+		{
+			Opponent->DrawCard();
+		}
+
+		CheckWinLose();
+		NotifyStateChanged();
+		UE_LOG(LogCardGame, Log, TEXT("ResolvePendingChoiceSealTarget(damage): Side=%d Target=%d Damage=%d -> OK"),
+			SideIndex, ChosenUnitIndex, Choice.PendingDamageAmount);
+		return true;
+	}
+
 	int32 SealedCost = 0;
 	if (!Opponent->SealUnit(ChosenUnitIndex, SealedCost))
 	{
@@ -1560,6 +1614,12 @@ void ACGGameMode::NotifyStateChanged()
 				// いずれの変化でも)ここで一括して判定する(「各色で特定の条件を
 				// 達成したときにフィニッシャーが駆けつける」というフィードバックへの対応)。
 				Side->CheckAndSpawnFinisher(GetOpponent(Side->SideIndex), CGState);
+				// 分身(緑): 味方Unit数条件(AllyUnitCountAtLeast)はここで一括判定する。
+				// SurvivedAttack/AttackedAndSurvived/LeaderHealedはCGGameMode::ExecuteAttack/
+				// ACGPlayerState::NotifyOwnLeaderHealedが該当イベントでCloneProgressを
+				// 先に+1しており、この呼び出しで実際の分身を成立させる
+				// (docs/next-ruleset-cards-v1.md「緑」)。
+				Side->CheckAllClones(GetOpponent(Side->SideIndex), CGState);
 				// オンライン対戦: このActor(PlayerState)の複製を次回の定期
 				// スケジュールまで待たず、今すぐ送るようサーバーに指示する。
 				// デフォルトのNetUpdateFrequencyだけに頼ると、変更してから
@@ -1573,6 +1633,16 @@ void ACGGameMode::NotifyStateChanged()
 		// GameState自身(MarketSlots/TurnCount/PendingChoice等)についても同様。
 		CGState->ForceNetUpdate();
 	}
+
+	// CheckAndSpawnFinisher(上記ループ内)は黄金の帝王(FIN_ORANGE)のように
+	// 登場時に新しい選択待ち(PendingChoice)を開始することがある。この関数の
+	// 呼び出し元は「自分が起こした選択」をそれぞれ個別にAutoResolveChoiceIfAI()
+	// 済みだが、フィニッシャー登場に伴う選択はここで初めて発生するため、
+	// 誰も解決しないまま残ってしまう(選択待ちがAI側だと、AIがその後
+	// 一切行動できずに試合が止まってしまう不具合があった)。ここで改めて
+	// 呼んでおくことで、AI側の選択ならその場で解決する(人間側の選択なら
+	// 何もしない。AutoResolveChoiceIfAI()自身の判定に委ねる)。
+	AutoResolveChoiceIfAI();
 	OnCardGameStateChanged();
 }
 

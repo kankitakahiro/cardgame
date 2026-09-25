@@ -40,7 +40,6 @@ void ACGPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLi
 	DOREPLIFETIME(ACGPlayerState, bGreenPassiveUsedThisTurn);
 	DOREPLIFETIME(ACGPlayerState, bBluePassiveUsedThisTurn);
 	DOREPLIFETIME(ACGPlayerState, bPurplePassiveUsedThisTurn);
-	DOREPLIFETIME(ACGPlayerState, NextPurchaseDiscount);
 	DOREPLIFETIME(ACGPlayerState, NextUnitPlayDiscount);
 	DOREPLIFETIME(ACGPlayerState, TransformsSucceededThisTurn);
 }
@@ -123,10 +122,29 @@ namespace
 		CGState->PendingChoice = Choice;
 	}
 
+	void Handle_OnPlayDamageTargetByAllyUnitCount(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
+		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // G11(新)群れの猛攻
+	{
+		// ダメージ量は自分の場のUnit数(プレイ時点)。対象は敵Unitのみ(顔面不可)。
+		if (!Opponent || !CGState || Opponent->BoardUnits.Num() == 0)
+		{
+			return;
+		}
+		FCGPendingChoice Choice;
+		Choice.ChoiceType = ECGChoiceType::EnemyUnitTarget;
+		Choice.SideIndex = Self.SideIndex;
+		Choice.EffectId = FName(CGEffectId::OnPlayDamageTargetByAllyUnitCount);
+		Choice.PendingDamageAmount = Self.BoardUnits.Num() + FirstSpellDamageBonus;
+		Choice.MaxCost = -1;
+		Choice.PromptText = FString::Printf(TEXT("ダメージ(%d)を与える敵ユニットを選んでください"), Choice.PendingDamageAmount);
+		CGState->PendingChoice = Choice;
+	}
+
 	void Handle_OnPlayHealSelf(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
 		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus)
 	{
 		Self.Heal(Def.EffectValue);
+		Self.NotifyOwnLeaderHealed(); // 分身(緑)のLeaderHealed条件用(G12不屈の大樹)。
 	}
 
 	void Handle_Discard1Draw2(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
@@ -151,20 +169,24 @@ namespace
 	}
 
 	void Handle_SummonApprenticeTokens(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
-		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // C020見習い召集/G05群れの誕生/G11大群の号令
+		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // C020見習い召集/G02癒しの若葉/G11大群の号令
 	{
+		// 0/1に弱体化(以前は1/1)。「緑のトークンを出すスペルが強すぎる」という
+		// フィードバックへの対応(docs/next-ruleset-cards-v1.md「緑」)。
 		for (int32 i = 0; i < Def.EffectValue; ++i)
 		{
-			Self.AddBoardUnitDirect(FName(TEXT("TK_APPRENTICE")), 1, 1, false, false);
+			Self.AddBoardUnitDirect(FName(TEXT("TK_APPRENTICE")), 0, 1, false, false);
 		}
 	}
 
 	void Handle_SummonToughApprenticeTokens(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
-		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // G05 群れの誕生(1/2版)
+		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // G05 群れの誕生
 	{
+		// 1/1に弱体化(以前は1/2)。「緑のトークンを出すスペルが強すぎる」という
+		// フィードバックへの対応(docs/next-ruleset-cards-v1.md「緑」)。
 		for (int32 i = 0; i < Def.EffectValue; ++i)
 		{
-			Self.AddBoardUnitDirect(FName(TEXT("TK_APPRENTICE_TOUGH")), 1, 2, false, false);
+			Self.AddBoardUnitDirect(FName(TEXT("TK_APPRENTICE_TOUGH")), 1, 1, false, false);
 		}
 	}
 
@@ -226,38 +248,6 @@ namespace
 		CGState->PendingChoice = Choice;
 	}
 
-	// マーケットからUnit1枚を選び、コストを支払わずそのまま場に出す選択を開始する
-	// (O15独占商人専用。BeginFreeMarketFetchChoiceと違い手札には触れないため
-	// 手札上限チェックは不要で、候補もUnitのみに絞る)。
-	void BeginMarketDeployChoice(ACGPlayerState& Self, ACGGameState* CGState, int32 MaxCost)
-	{
-		if (!CGState)
-		{
-			return;
-		}
-		bool bHasCandidate = false;
-		for (const FName& MarketCardId : CGState->GetMarketCardIds())
-		{
-			FCGCardDef MarketDef;
-			if (UCGCardDatabase::FindCard(MarketCardId, MarketDef) && MarketDef.CardType == ECGCardType::Unit
-				&& (MaxCost < 0 || MarketDef.Cost <= MaxCost))
-			{
-				bHasCandidate = true;
-				break;
-			}
-		}
-		if (!bHasCandidate)
-		{
-			return;
-		}
-		FCGPendingChoice Choice;
-		Choice.ChoiceType = ECGChoiceType::MarketCard;
-		Choice.SideIndex = Self.SideIndex;
-		Choice.EffectId = FName(CGEffectId::OnPlayDeployFromMarketFree);
-		Choice.MaxCost = MaxCost;
-		Choice.PromptText = TEXT("場に出すマーケットのUnitを選んでください");
-		CGState->PendingChoice = Choice;
-	}
 
 	void Handle_BuyFromMarketCostUnder3ToHand(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
 		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // C022 市場調達/O07 即断の商談(EffectValue=コスト上限)
@@ -544,6 +534,7 @@ namespace
 	{
 		static const TMap<FName, FSpellEffectHandler> Handlers = {
 			{ FName(CGEffectId::OnPlayDamageTarget), &Handle_OnPlayDamageTarget },
+			{ FName(CGEffectId::OnPlayDamageTargetByAllyUnitCount), &Handle_OnPlayDamageTargetByAllyUnitCount },
 			{ FName(CGEffectId::OnPlayHealSelf), &Handle_OnPlayHealSelf },
 			{ FName(CGEffectId::Discard1Draw2), &Handle_Discard1Draw2 },
 			{ FName(CGEffectId::SummonApprenticeTokens), &Handle_SummonApprenticeTokens },
@@ -736,6 +727,7 @@ namespace
 	void Handle_OnPlayHealSelfUnit(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState) // 緑: 登場時に味方リーダーを回復(Unit登場時版。G06/G15)
 	{
 		Self.Heal(Def.EffectValue);
+		Self.NotifyOwnLeaderHealed(); // 分身(緑)のLeaderHealed条件用(G12不屈の大樹)。
 	}
 
 	void Handle_OnPlayDebuffTarget(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState) // 青: 対象指定の敵単体デバフ(B02。EffectValue=Atk/Hp共通の増分、負の値)
@@ -769,6 +761,16 @@ namespace
 		Self_Unit.Hp += Def.EffectValue;
 	}
 
+	void Handle_OnPlaySelfBuffAtkIfAlliesPresent(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState) // G04 森の猪
+	{
+		// Handle_OnPlayBuffSelfIfAlliesPresent(G10)のAtkのみ版。
+		if (Self.BoardUnits.Num() < 4)
+		{
+			return;
+		}
+		Self.BoardUnits.Last().Atk += Def.EffectValue;
+	}
+
 	void Handle_OnPlayRerollMarketRandom(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState) // O11 市場の目付役
 	{
 		// 次の購入の割引はDef.HasTag("Discount")からACGPlayerState::PlayCardFromHandが
@@ -782,7 +784,7 @@ namespace
 
 	void Handle_OnPlayDeployFromMarketFree(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState) // O15 独占商人(EffectValue=-1でコスト上限なし)
 	{
-		BeginMarketDeployChoice(Self, CGState, Def.EffectValue);
+		Self.BeginMarketDeployChoice(CGState, Def.EffectValue, 0);
 	}
 
 	void Handle_OnPlayGrantNextUnitPlayDiscount(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState) // P11 予見の魔導師
@@ -794,27 +796,14 @@ namespace
 
 	void Handle_OnPlayFreeMarketCards(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState) // 橙フィニッシャー(EffectValue=枚数)
 	{
-		// O15独占商人と同じ「コストを支払わずそのまま場に出す」処理を、プレイヤーに
-		// 選ばせず先頭のUnit枠から順にEffectValue枚まで自動で行う(選択を3回連続で
-		// 挟むと演出が煩雑になるため。docs/next-ruleset-cards-v1.md「橙」)。
-		if (!CGState)
-		{
-			return;
-		}
-		int32 Deployed = 0;
-		for (int32 SlotIndex = 0; SlotIndex < CGState->MarketSlots.Num() && Deployed < Def.EffectValue; ++SlotIndex)
-		{
-			FCGCardDef MarketDef;
-			if (!UCGCardDatabase::FindCard(CGState->MarketSlots[SlotIndex].CardId, MarketDef)
-				|| MarketDef.CardType != ECGCardType::Unit)
-			{
-				continue;
-			}
-			Self.AddBoardUnitDirect(MarketDef.CardId, MarketDef.Atk, MarketDef.Hp,
-				MarketDef.HasTag(TEXT("Haste")), MarketDef.HasTag(TEXT("Guard")));
-			CGState->RefillMarketSlot(SlotIndex);
-			++Deployed;
-		}
+		// O15独占商人と同じ「マーケットのUnitを1枚選び、コストを支払わずそのまま
+		// 場に出す」選択(BeginMarketDeployChoice)を、EffectValue回連続で行う
+		// (「黄色のフィニッシャーはプレイヤーがマーケットのカードを選択して無料で
+		// プレイできるカードを選びたい」というフィードバックへの対応。以前は
+		// プレイヤーに選ばせず先頭のUnit枠から自動でEffectValue枚デプロイしていた)。
+		// 1回目の選択後、続きは`ACGGameMode::ResolvePendingChoiceWithCard`が
+		// `Choice.RemainingRepeats`を見て自動で次の選択を開始する。
+		Self.BeginMarketDeployChoice(CGState, -1, Def.EffectValue - 1);
 	}
 
 	void Handle_OnPlayExileAllEnemyUnits(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState) // 青フィニッシャー
@@ -858,6 +847,7 @@ namespace
 			{ FName(CGEffectId::OnPlayHealSelf), &Handle_OnPlayHealSelfUnit },
 			{ FName(CGEffectId::OnPlayDebuffTarget), &Handle_OnPlayDebuffTarget },
 			{ FName(CGEffectId::OnPlayBuffSelfIfAlliesPresent), &Handle_OnPlayBuffSelfIfAlliesPresent },
+			{ FName(CGEffectId::OnPlaySelfBuffAtkIfAlliesPresent), &Handle_OnPlaySelfBuffAtkIfAlliesPresent },
 			{ FName(CGEffectId::OnPlayRerollMarketRandom), &Handle_OnPlayRerollMarketRandom },
 			{ FName(CGEffectId::OnPlayDeployFromMarketFree), &Handle_OnPlayDeployFromMarketFree },
 			{ FName(CGEffectId::OnPlayGrantNextUnitPlayDiscount), &Handle_OnPlayGrantNextUnitPlayDiscount },
@@ -913,12 +903,22 @@ namespace
 		}
 	}
 
+	void Handle_OnDeathDamageRandomEnemyUnit1(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def, int32& OutDrawCount) // R01 火口の悪童
+	{
+		if (Opponent && Opponent->BoardUnits.Num() > 0)
+		{
+			const int32 RandomUnitIndex = FMath::RandRange(0, Opponent->BoardUnits.Num() - 1);
+			Opponent->ApplyDamageToUnit(RandomUnitIndex, Def.EffectValue);
+		}
+	}
+
 	const TMap<FName, FUnitOnDeathEffectHandler>& GetUnitOnDeathEffectHandlers()
 	{
 		static const TMap<FName, FUnitOnDeathEffectHandler> Handlers = {
 			{ FName(CGEffectId::OnDeathDraw), &Handle_OnDeathDraw },
 			{ FName(CGEffectId::OnDeathReturnRandomGraveyardUnit), &Handle_OnDeathReturnRandomGraveyardUnit },
 			{ FName(CGEffectId::OnDeathDamageFace1), &Handle_OnDeathDamageFace1 },
+			{ FName(CGEffectId::OnDeathDamageRandomEnemyUnit1), &Handle_OnDeathDamageRandomEnemyUnit1 },
 		};
 		return Handlers;
 	}
@@ -1171,12 +1171,14 @@ bool ACGPlayerState::PlayCardFromHand(FName CardId, ACGPlayerState* Opponent, in
 			ForceTransformAll(Opponent, CGState);
 		}
 
-		// 先物(橙、Discountタグ): 登場時、次の購入のコストを1軽減する。専用の
-		// EffectIdを持たせず、タグから直接付与することで複数のカード(O03/O06/O11/O14)
-		// が同じ効果を共有できるようにしている(docs/next-ruleset-cards-v1.md「橙」)。
+		// 先物(橙、Discountタグ): 登場時、コインを1増やす。専用のEffectIdを
+		// 持たせず、タグから直接付与することで複数のカード(O02/O03/O06/O11/O14)が
+		// 同じ効果を共有できるようにしている(以前は「次の購入コストを1軽減」
+		// だったが、「先物のキーワード効果をコイン付与にしてほしい」という
+		// フィードバックで変更した。docs/keywords.md「先物」参照)。
 		if (Def.HasTag(TEXT("Discount")))
 		{
-			NextPurchaseDiscount += 1;
+			PurchaseMana += 1;
 		}
 
 		ResolveUnitOnPlayEffect(Def, Opponent, CGState);
@@ -1315,6 +1317,37 @@ void ACGPlayerState::AddBoardUnitDirect(FName CardId, int32 Atk, int32 Hp, bool 
 	BoardUnits.Add(NewUnit);
 }
 
+void ACGPlayerState::BeginMarketDeployChoice(ACGGameState* CGState, int32 MaxCost, int32 RemainingRepeats)
+{
+	if (!CGState)
+	{
+		return;
+	}
+	bool bHasCandidate = false;
+	for (const FName& MarketCardId : CGState->GetMarketCardIds())
+	{
+		FCGCardDef MarketDef;
+		if (UCGCardDatabase::FindCard(MarketCardId, MarketDef) && MarketDef.CardType == ECGCardType::Unit
+			&& (MaxCost < 0 || MarketDef.Cost <= MaxCost))
+		{
+			bHasCandidate = true;
+			break;
+		}
+	}
+	if (!bHasCandidate)
+	{
+		return;
+	}
+	FCGPendingChoice Choice;
+	Choice.ChoiceType = ECGChoiceType::MarketCard;
+	Choice.SideIndex = SideIndex;
+	Choice.EffectId = FName(CGEffectId::OnPlayDeployFromMarketFree);
+	Choice.MaxCost = MaxCost;
+	Choice.RemainingRepeats = RemainingRepeats;
+	Choice.PromptText = TEXT("場に出すマーケットのUnitを選んでください");
+	CGState->PendingChoice = Choice;
+}
+
 bool ACGPlayerState::BuyCard(FName CardId)
 {
 	FCGCardDef Def;
@@ -1330,10 +1363,6 @@ bool ACGPlayerState::BuyCard(FName CardId)
 	{
 		return false;
 	}
-
-	// 先物(橙)の一度きりの割引は、実際に購入が成立した時点で消費する
-	// (ComputeCurrentPurchaseDiscount()自体は状態を変えない参照用のため)。
-	NextPurchaseDiscount = 0;
 
 	// 橙パッシブ: このターン最初の購入をしたとき、コイン+1
 	// (docs/game-rules-minimum.md「色ガイド」)。bBoughtThisTurnを更新する
@@ -1397,8 +1426,6 @@ int32 ACGPlayerState::ComputeCurrentPurchaseDiscount() const
 	{
 		Discount += 1;
 	}
-	// 先物キーワード(橙): 場のユニットの効果で予約された、次の購入1回だけの追加割引。
-	Discount += NextPurchaseDiscount;
 	// 市場開放の号令(O13、次期ルール): このターン中、購入コストが全て1軽減される。
 	if (bAllPurchasesDiscountedThisTurn)
 	{
@@ -1558,6 +1585,37 @@ namespace
 		};
 		return Predicates;
 	}
+
+	// 分身条件(CGCloneConditionId)ごとの判定関数テーブル。GetTransformConditionPredicates()と
+	// 同じ考え方(docs/next-ruleset-cards-v1.md「緑」)。
+	using FCloneConditionPredicate = bool(*)(const ACGPlayerState&, const FCGBoardUnit&, int32);
+
+	bool Predicate_CloneProgressAtLeast(const ACGPlayerState&, const FCGBoardUnit& Unit, int32 Value)
+	{
+		return Unit.CloneProgress >= Value;
+	}
+
+	bool Predicate_AllyUnitCountAtLeast(const ACGPlayerState& Self, const FCGBoardUnit&, int32 Value)
+	{
+		return Self.BoardUnits.Num() >= Value;
+	}
+
+	bool Predicate_LeaderHpAtMost(const ACGPlayerState& Self, const FCGBoardUnit&, int32 Value)
+	{
+		return Self.CurrentHP <= Value;
+	}
+
+	const TMap<FName, FCloneConditionPredicate>& GetCloneConditionPredicates()
+	{
+		static const TMap<FName, FCloneConditionPredicate> Predicates = {
+			{ FName(CGCloneConditionId::AllyUnitCountAtLeast), &Predicate_AllyUnitCountAtLeast },
+			{ FName(CGCloneConditionId::SurvivedAttack), &Predicate_CloneProgressAtLeast },
+			{ FName(CGCloneConditionId::AttackedAndSurvived), &Predicate_CloneProgressAtLeast },
+			{ FName(CGCloneConditionId::LeaderHealed), &Predicate_CloneProgressAtLeast },
+			{ FName(CGCloneConditionId::LeaderHpAtMost), &Predicate_LeaderHpAtMost },
+		};
+		return Predicates;
+	}
 }
 
 void ACGPlayerState::PerformTransform(FCGBoardUnit& Unit, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState)
@@ -1565,12 +1623,24 @@ void ACGPlayerState::PerformTransform(FCGBoardUnit& Unit, const FCGCardDef& Def,
 	FCGCardDef TargetDef;
 	UCGCardDatabase::FindCard(Def.TransformTargetCardId, TargetDef);
 
-	// 変貌先は基本ステータスをそのまま採用する(変貌前に受けていたダメージは
-	// 引き継がない。ダメージを保持する設計は複雑さに見合わないため採用しない)。
+	// 変貌前カードの基本ステータスとの差分(バフ/デバフによる増減、被ダメージに
+	// よる減少)を求め、変貌先の基本ステータスへそのまま加算して引き継ぐ
+	// (「変貌時にバフやダメージがリセットされていたので、変貌後にも引き継がれる
+	// ようにしてほしい」というフィードバックへの対応。以前は変貌先の基本値へ
+	// 単純に上書きしており、変貌前に受けていたバフ・ダメージが失われていた)。
+	// HpはMaxHpを持たず「現在の残り体力」をそのまま表すフィールドのため
+	// (FCGBoardUnit::Hp、Handle_OnPlayBuffAllAlliesFlat等のバフも同じ値を
+	// 直接増減させている)、基本値との差がそのまま「ダメージなら負、バフなら正」
+	// の増減量になる。
+	FCGCardDef PreTransformDef;
+	UCGCardDatabase::FindCard(Unit.CardId, PreTransformDef);
+	const int32 AtkDelta = Unit.Atk - PreTransformDef.Atk;
+	const int32 HpDelta = Unit.Hp - PreTransformDef.Hp;
+
 	Unit.OriginalCardId = Unit.CardId;
 	Unit.CardId = Def.TransformTargetCardId;
-	Unit.Atk = TargetDef.Atk;
-	Unit.Hp = TargetDef.Hp;
+	Unit.Atk = TargetDef.Atk + AtkDelta;
+	Unit.Hp = TargetDef.Hp + HpDelta;
 	Unit.bHasGuard = TargetDef.HasTag(TEXT("Guard")); // P12T「万物の頂点」等、変貌先だけが庇護を持つケース。
 	Unit.TransformProgress = 0;
 	++TransformsSucceededThisTurn;
@@ -1601,6 +1671,75 @@ void ACGPlayerState::ApplyTransformIfConditionMet(FCGBoardUnit& Unit, ACGPlayerS
 	if (Predicate && (*Predicate)(*this, Unit, Def.TransformConditionValue))
 	{
 		PerformTransform(Unit, Def, Opponent, CGState);
+	}
+}
+
+void ACGPlayerState::PerformClone(FCGBoardUnit& Unit, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState)
+{
+	// このユニットにつき生涯で1回だけ(docs/next-ruleset-cards-v1.md「緑」)。
+	Unit.bHasCloned = true;
+
+	// コピーは元カードの素の基本ステータスのみを持ち、バフ・デバフもキーワード
+	// (疾駆/庇護/分身自身を含む)も一切持たない。bHasCloned=trueで生成することで、
+	// 同じCardId(=同じCloneConditionId)を持つコピー自身がさらに分身することを防ぐ。
+	FCGBoardUnit Copy;
+	Copy.CardId = Unit.CardId;
+	Copy.Atk = Def.Atk;
+	Copy.Hp = Def.Hp;
+	Copy.bCanAttack = false;
+	Copy.bHasGuard = false;
+	Copy.bHasCloned = true;
+	BoardUnits.Add(Copy);
+
+	// 登場時効果はコピーが場に出たときにも発動する(docs/next-ruleset-cards-v1.md「緑」。
+	// 通常のUnit登場時効果ハンドラ(ResolveUnitOnPlayEffect)をそのまま再利用する)。
+	ResolveUnitOnPlayEffect(Def, Opponent, CGState);
+}
+
+void ACGPlayerState::ApplyCloneIfConditionMet(FCGBoardUnit& Unit, ACGPlayerState* Opponent, ACGGameState* CGState)
+{
+	if (Unit.bHasCloned)
+	{
+		return;
+	}
+
+	FCGCardDef Def;
+	if (!UCGCardDatabase::FindCard(Unit.CardId, Def) || Def.CloneConditionId.IsNone())
+	{
+		return;
+	}
+
+	const FCloneConditionPredicate* Predicate = GetCloneConditionPredicates().Find(Def.CloneConditionId);
+	if (Predicate && (*Predicate)(*this, Unit, Def.CloneConditionValue))
+	{
+		PerformClone(Unit, Def, Opponent, CGState);
+	}
+}
+
+void ACGPlayerState::CheckAllClones(ACGPlayerState* Opponent, ACGGameState* CGState)
+{
+	// PerformClone()がBoardUnits.Add()で配列を伸ばすことがあるため(分身の結果)、
+	// 範囲for文ではなく都度Num()を再評価するインデックスループにする
+	// (新しく追加されたコピーはbHasCloned=trueなので、走査対象に入っても何もしない)。
+	for (int32 i = 0; i < BoardUnits.Num(); ++i)
+	{
+		ApplyCloneIfConditionMet(BoardUnits[i], Opponent, CGState);
+	}
+}
+
+void ACGPlayerState::NotifyOwnLeaderHealed()
+{
+	for (FCGBoardUnit& Unit : BoardUnits)
+	{
+		if (Unit.bHasCloned)
+		{
+			continue;
+		}
+		FCGCardDef Def;
+		if (UCGCardDatabase::FindCard(Unit.CardId, Def) && Def.CloneConditionId == FName(CGCloneConditionId::LeaderHealed))
+		{
+			++Unit.CloneProgress;
+		}
 	}
 }
 
@@ -1746,6 +1885,10 @@ void ACGPlayerState::NotifySealSucceeded(ACGPlayerState* Opponent)
 	if (Opponent && HasBoardUnitWithEffect(FName(CGEffectId::OnSealDamageFace1))) // B04 幻惑の魔道士
 	{
 		Opponent->ApplyDamage(1);
+	}
+	if (HasBoardUnitWithEffect(FName(CGEffectId::OnSealDraw1))) // B08 霧の壁
+	{
+		DrawCard();
 	}
 }
 

@@ -130,6 +130,15 @@ struct FCGCardDef
 
 	UPROPERTY(BlueprintReadOnly, Category = "CardGame")
 	int32 TransformConditionValue = 0;
+
+	// 分身(Cloneタグ)を持つカードのみ意味を持つ。CloneConditionIdがNAME_Noneなら
+	// 分身能力を持たない。条件の意味はCGCloneConditionId(下記)を参照。分身の
+	// コピー先は常に自分自身(CardId)のため、変貌と違いターゲットカードIDは不要。
+	UPROPERTY(BlueprintReadOnly, Category = "CardGame")
+	FName CloneConditionId;
+
+	UPROPERTY(BlueprintReadOnly, Category = "CardGame")
+	int32 CloneConditionValue = 0;
 };
 
 // FCGCardDef::TransformConditionId に入る値の一覧(docs/next-ruleset-cards-v1.md
@@ -164,6 +173,29 @@ namespace CGTransformConditionId
 	// 達すると変貌(P03若き見習い=2、docs/next-ruleset-cards-v1.md「カードの効果を
 	// 書き直しました」対応)。ACGGameMode::ResolvePendingChoiceAllyTargetで進行度を+1する。
 	inline constexpr const TCHAR* BuffedCount = TEXT("BuffedCount");
+}
+
+// FCGCardDef::CloneConditionId に入る値の一覧(docs/next-ruleset-cards-v1.md「緑」)。
+// CGTransformConditionIdと同じ考え方で、判定ロジックとカードデータの両方がこの
+// 定数を参照する。
+namespace CGCloneConditionId
+{
+	// 場の味方Unit数(自分自身を含む)がCloneConditionValue以上になった瞬間に分身
+	// (G01若木の番人=2、G06聖樹の守護者=2、G09巨石の壁役=3、G15万象の守り神=4)。
+	inline constexpr const TCHAR* AllyUnitCountAtLeast = TEXT("AllyUnitCountAtLeast");
+
+	// このユニットが(防御側として)攻撃を受けて生き残ると分身(G03熊の盾持ち)。
+	inline constexpr const TCHAR* SurvivedAttack = TEXT("SurvivedAttack");
+
+	// このユニットが(攻撃側として)攻撃して生き残ると分身(G13森の巨人)。
+	inline constexpr const TCHAR* AttackedAndSurvived = TEXT("AttackedAndSurvived");
+
+	// 味方リーダーが回復すると分身(G12不屈の大樹)。
+	inline constexpr const TCHAR* LeaderHealed = TEXT("LeaderHealed");
+
+	// 自分のリーダーの体力がCloneConditionValue以下になった瞬間に分身
+	// (G07猛る大鹿=10)。
+	inline constexpr const TCHAR* LeaderHpAtMost = TEXT("LeaderHpAtMost");
 }
 
 // 場に出ているユニット1体分の状態。以前はCGPlayerState側で
@@ -202,6 +234,17 @@ struct FCGBoardUnit
 	// 「変貌先カード」参照)。変貌条件を持たないユニットでは未使用。
 	UPROPERTY(BlueprintReadOnly, Category = "CardGame")
 	int32 TransformProgress = 0;
+
+	// 分身条件の進行度を数える汎用カウンタ。TransformProgressと同じ考え方で、
+	// 解釈はCardDef.CloneConditionIdによって変わる(docs/next-ruleset-cards-v1.md「緑」)。
+	UPROPERTY(BlueprintReadOnly, Category = "CardGame")
+	int32 CloneProgress = 0;
+
+	// 分身が発動済みか(このユニット1体につき生涯で1回だけ)。分身で生まれた
+	// コピー自身もtrueで生成し、コピーがさらに分身することを防ぐ
+	// (docs/next-ruleset-cards-v1.md「緑」)。
+	UPROPERTY(BlueprintReadOnly, Category = "CardGame")
+	bool bHasCloned = false;
 };
 
 // 共通マーケットの1枠(次期ルール、docs/next-ruleset-design.md「マーケット」)。
@@ -391,6 +434,12 @@ struct FCGPendingChoice
 	UPROPERTY(BlueprintReadOnly, Category = "CardGame")
 	int32 PendingBuffAmount = 0;
 
+	// MarketCard用: この選択を解決した後、続けて同じ種類の選択をあと何回
+	// 繰り返すか(黄金の帝王(FIN_ORANGE)のように、複数枚を1枚ずつ選ばせる効果で
+	// 使う。docs/next-ruleset-cards-v1.md「橙」)。0なら繰り返さない。
+	UPROPERTY(BlueprintReadOnly, Category = "CardGame")
+	int32 RemainingRepeats = 0;
+
 	bool IsActive() const { return ChoiceType != ECGChoiceType::None; }
 };
 
@@ -422,9 +471,14 @@ namespace CGEffectId
 	inline constexpr const TCHAR* OnPlayDamageTarget = TEXT("OnPlayDamageTarget");                  // C017 火花の一撃
 	inline constexpr const TCHAR* OnPlayHealSelf = TEXT("OnPlayHealSelf");                          // C018 応急手当
 	inline constexpr const TCHAR* Discard1Draw2 = TEXT("Discard1Draw2");                            // C019 手札の選別
-	// EffectValue体の「見習い兵」1/1トークンを場に出す(EffectValueを読むよう
-	// 汎用化済み。C020見習い召集=2、G05群れの誕生=2、G11大群の号令=3)。
+	// EffectValue体の「見習い兵」トークンを場に出す(EffectValueを読むよう
+	// 汎用化済み。C020見習い召集=2、G02癒しの若葉=2)。
 	inline constexpr const TCHAR* SummonApprenticeTokens = TEXT("SummonApprenticeTokens");
+
+	// 自分の場のUnit数だけダメージを、選んだ敵Unit1体に与える(G11(新)群れの猛攻。
+	// トークン生成スペルが強すぎるというフィードバックへの対応で、大群の号令の
+	// 差し替えとして追加。EnemyUnitTarget、顔面は選べない)。
+	inline constexpr const TCHAR* OnPlayDamageTargetByAllyUnitCount = TEXT("OnPlayDamageTargetByAllyUnitCount");
 
 	inline constexpr const TCHAR* ReturnGraveyardSpellSelfDamage1 = TEXT("ReturnGraveyardSpellSelfDamage1"); // C021 墓地再点火
 	inline constexpr const TCHAR* BuyFromMarketCostUnder3ToHand = TEXT("BuyFromMarketCostUnder3ToHand");     // C022 市場調達
@@ -498,6 +552,10 @@ namespace CGEffectId
 	// 赤の直接ダメージ・トリガー系(次期ルール、フェーズ4b)。
 	inline constexpr const TCHAR* OnPlayDamageFace = TEXT("OnPlayDamageFace");           // R03/R08/R15相当(選択不要、必ず顔面)
 	inline constexpr const TCHAR* OnDeathDamageFace1 = TEXT("OnDeathDamageFace1");       // R06相当(自分自身の死亡時)
+	// 自分自身の死亡時、敵のランダムなUnit1体にEffectValueダメージ(対象がいなければ
+	// 何も起きない。R01相当。バニラのステータス効率が高すぎたため、ステータスを
+	// 下げる代わりに持たせた。docs/next-ruleset-cards-v1.md「赤」参照)。
+	inline constexpr const TCHAR* OnDeathDamageRandomEnemyUnit1 = TEXT("OnDeathDamageRandomEnemyUnit1");
 	// 自分の他のUnitが死亡するたび(このユニット自身は場に残っている前提)敵リーダーへ
 	// EffectValueダメージ(R12相当)。OnDeathDamageFace1と違い「死んだユニットの
 	// ハンドラ」ではなく「生き残ったユニットのアウラ」として判定する
@@ -521,6 +579,12 @@ namespace CGEffectId
 	// (ACGGameMode::ResolvePendingChoiceSealTarget、B14のターン開始時封印)で呼ぶ。
 	inline constexpr const TCHAR* OnSealDamageFace1 = TEXT("OnSealDamageFace1");
 
+	// 常在アウラ: このユニットが場にいる間、自分が封印を成立させるたびに1ドロー
+	// (B08 霧の壁。ドキュメントに設計だけあり未実装だった効果。docs/next-ruleset-
+	// cards-v1.md「青」参照)。OnSealDamageFace1と同じくEffectIdテーブルには
+	// 登録せず、ACGPlayerState::NotifySealSucceededから直接判定する。
+	inline constexpr const TCHAR* OnSealDraw1 = TEXT("OnSealDraw1");
+
 	// B09: 敵Unit1体を封印し、コインを1増加する(Spell版封印の亜種。
 	// EffectValue=コスト上限、-1で無条件)。
 	inline constexpr const TCHAR* SealSpellGrantPurchaseMana = TEXT("SealSpellGrantPurchaseMana");
@@ -540,6 +604,11 @@ namespace CGEffectId
 	// 登場時、場に他の味方Unitが3体以上いれば自分自身をEffectValue分バフする
 	// (Atk/Hp共通。G10相当)。
 	inline constexpr const TCHAR* OnPlayBuffSelfIfAlliesPresent = TEXT("OnPlayBuffSelfIfAlliesPresent");
+
+	// 登場時、場に他の味方Unitが3体以上いれば自分自身のAtkだけEffectValue分
+	// 上げる(Hpは変化しない。G04森の猪。バニラのステータス効率が高すぎたため、
+	// 素のステータスを下げる代わりに条件付きバフを持たせた)。
+	inline constexpr const TCHAR* OnPlaySelfBuffAtkIfAlliesPresent = TEXT("OnPlaySelfBuffAtkIfAlliesPresent");
 
 	// 緑: このユニットが攻撃(防御側として)を受けるたびに味方リーダーを1回復する
 	// 常在アウラ(G12相当。EffectIdテーブルには登録せず、ACGGameMode::ExecuteAttack内で
@@ -568,7 +637,7 @@ namespace CGEffectId
 	// ACGPlayerState::CheckAndSpawnFinisher参照。「各色で条件を達成するとフィニッシャーが
 	// 駆けつける」というフィードバックへの対応)。赤フィニッシャーは疾駆持ちの
 	// ステータスのみで専用効果を持たないためEffectId=Noneのまま。
-	inline constexpr const TCHAR* OnPlayFreeMarketCards = TEXT("OnPlayFreeMarketCards");       // 橙フィニッシャー(EffectValue=枚数、コスト無視でそのまま場に出す)
+	inline constexpr const TCHAR* OnPlayFreeMarketCards = TEXT("OnPlayFreeMarketCards");       // 橙フィニッシャー(EffectValue=枚数、コスト無視でプレイヤーが1枚ずつ選んで場に出す)
 	inline constexpr const TCHAR* OnPlayExileAllEnemyUnits = TEXT("OnPlayExileAllEnemyUnits"); // 青フィニッシャー(登場時、敵の場を全て追放)
 	inline constexpr const TCHAR* OnPlayBuffAllAlliesFlat = TEXT("OnPlayBuffAllAlliesFlat");   // 緑フィニッシャー(登場時、EffectValue分だけ味方全体Atk/Hp増加)
 	// 紫フィニッシャー: 登場時効果ではなく常在アウラ(このユニットが場にいる間、

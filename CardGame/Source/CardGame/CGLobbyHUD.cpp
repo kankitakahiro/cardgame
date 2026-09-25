@@ -116,6 +116,39 @@ namespace
 		}
 		return Button;
 	}
+
+	// 「見出し + (現在の選択の情報表示 + 選択ボタン)」の1セクションを作る
+	// (docs/architecture.md「ロビーのモーダル構成」参照)。対戦準備画面の
+	// 対戦相手/自分、オンライン対戦画面の自分、の3箇所で使う共通部品。
+	// 情報表示のテキストは呼び出し側がRefreshXxxSummary()で都度更新する。
+	UTextBlock* AddDeckSummarySection(UWidgetTree* WidgetTree, UVerticalBox* Root, const TCHAR* HeadingName,
+		const FString& HeadingText, const TCHAR* RowName, const TCHAR* TextName, const TCHAR* ButtonName, UButton*& OutSelectButton)
+	{
+		UTextBlock* Heading = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), HeadingName);
+		Heading->SetText(FText::FromString(HeadingText));
+		Heading->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 18));
+		if (UVerticalBoxSlot* HeadingSlot = Root->AddChildToVerticalBox(Heading))
+		{
+			HeadingSlot->SetPadding(FMargin(0.f, 8.f, 0.f, 4.f));
+		}
+
+		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), RowName);
+		if (UVerticalBoxSlot* RowSlot = Root->AddChildToVerticalBox(Row))
+		{
+			RowSlot->SetPadding(FMargin(0.f, 0.f, 0.f, 8.f));
+		}
+
+		UTextBlock* SummaryText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TextName);
+		SummaryText->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"), 16));
+		if (UHorizontalBoxSlot* SummarySlot = Row->AddChildToHorizontalBox(SummaryText))
+		{
+			SummarySlot->SetVerticalAlignment(VAlign_Center);
+			SummarySlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+		}
+
+		OutSelectButton = MakeSmallButton(WidgetTree, ButtonName, TEXT("選択"), Row);
+		return SummaryText;
+	}
 }
 
 TSharedRef<SWidget> UCGLobbyHUD::RebuildWidget()
@@ -147,14 +180,11 @@ void UCGLobbyHUD::EnsureWidgetTreeBuilt()
 	UButton* DeckBuilderButton = MakeMenuButton(WidgetTree, TEXT("DeckBuilderButton"), TEXT("デッキ構築"), Root);
 	DeckBuilderButton->OnClicked.AddDynamic(this, &UCGLobbyHUD::HandleDeckBuilderClicked);
 
-	UButton* DeckSelectButton = MakeMenuButton(WidgetTree, TEXT("DeckSelectButton"), TEXT("デッキ選択"), Root);
-	DeckSelectButton->OnClicked.AddDynamic(this, &UCGLobbyHUD::HandleOpenDeckSelectClicked);
-
-	UButton* AIDeckSelectButton = MakeMenuButton(WidgetTree, TEXT("AIDeckSelectButton"), TEXT("対戦相手デッキ"), Root);
-	AIDeckSelectButton->OnClicked.AddDynamic(this, &UCGLobbyHUD::HandleOpenAIDeckSelectClicked);
-
-	UButton* StartBattleButton = MakeMenuButton(WidgetTree, TEXT("StartBattleButton"), TEXT("バトル開始"), Root);
-	StartBattleButton->OnClicked.AddDynamic(this, &UCGLobbyHUD::HandleStartBattleClicked);
+	// 「デッキ選択」「対戦相手デッキ」は単体ボタンとしては廃止し、「対戦開始」を
+	// 押した後に開く`BattleSetupLayer`(デッキ選択画面)の中でまとめて選ぶ
+	// (docs/architecture.md「ロビーのモーダル構成」参照)。
+	UButton* StartBattleButton = MakeMenuButton(WidgetTree, TEXT("StartBattleButton"), TEXT("対戦開始"), Root);
+	StartBattleButton->OnClicked.AddDynamic(this, &UCGLobbyHUD::HandleOpenBattleSetupClicked);
 
 	UButton* CodexButton = MakeMenuButton(WidgetTree, TEXT("CodexButton"), TEXT("カード図鑑"), Root);
 	CodexButton->OnClicked.AddDynamic(this, &UCGLobbyHUD::HandleOpenCodexClicked);
@@ -340,9 +370,12 @@ void UCGLobbyHUD::EnsureWidgetTreeBuilt()
 	AddHowToPlaySection(HowToPlayContent, TEXT("勝敗"),
 		TEXT("相手のライフを0以下にすると勝利です。自分のライフが0以下になった場合、またはカードを引こうとしたときに山札が0枚だった場合は敗北になります。"));
 
-	// デッキ選択: 保存済みデッキ(GameInstance::SavedDecks)の一覧から、バトルで
-	// 使うデッキを選ぶ全画面レイヤー(カード図鑑・遊び方と同じ方式)。中身は
-	// 開くたびに作り直す(RefreshDeckSelectList、カード図鑑と同じ考え方)。
+	// 自分のデッキ一覧: 保存済みデッキ(GameInstance::SavedDecks)+基本デッキから
+	// 選ぶ全画面レイヤー(カード図鑑・遊び方と同じ方式)。「デッキ選択(親)」
+	// (BattleSetupLayer)または「オンライン対戦」(OnlineLayer)の「選択」ボタンから
+	// 開かれる共通画面で、この画面自体に「閉じる」は置かない。行を選ぶと
+	// PendingReturnLayerへ自動的に戻る(docs/architecture.md「ロビーのモーダル構成」参照)。
+	// 中身は開くたびに作り直す(RefreshDeckSelectList、カード図鑑と同じ考え方)。
 	DeckSelectLayer = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("DeckSelectLayer"));
 	DeckSelectLayer->SetBrushColor(FLinearColor(0.05f, 0.05f, 0.05f, 0.98f));
 	DeckSelectLayer->SetHorizontalAlignment(HAlign_Fill);
@@ -359,16 +392,13 @@ void UCGLobbyHUD::EnsureWidgetTreeBuilt()
 	}
 
 	UTextBlock* DeckSelectTitle = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("DeckSelectTitle"));
-	DeckSelectTitle->SetText(FText::FromString(TEXT("デッキ選択")));
+	DeckSelectTitle->SetText(FText::FromString(TEXT("自分のデッキ")));
 	DeckSelectTitle->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 28));
 	if (UHorizontalBoxSlot* DeckSelectTitleSlot = DeckSelectHeaderRow->AddChildToHorizontalBox(DeckSelectTitle))
 	{
 		DeckSelectTitleSlot->SetVerticalAlignment(VAlign_Center);
 		DeckSelectTitleSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 	}
-
-	UButton* CloseDeckSelectButton = MakeSmallButton(WidgetTree, TEXT("CloseDeckSelectButton"), TEXT("閉じる"), DeckSelectHeaderRow);
-	CloseDeckSelectButton->OnClicked.AddDynamic(this, &UCGLobbyHUD::HandleCloseDeckSelectClicked);
 
 	// 一覧本体は「遊び方」と同じく固定幅で中央に置く(1行がリスト全体の横幅
 	// いっぱいに伸びると、名前とボタンの間が間延びして見づらいため)。
@@ -396,10 +426,11 @@ void UCGLobbyHUD::EnsureWidgetTreeBuilt()
 		DeckSelectBodySlot->SetPadding(FMargin(24.f, 8.f));
 	}
 
-	// 対戦相手(AI)デッキ選択: デッキ選択(自分用)と同じ全画面モーダルレイヤー
-	// 方式(「CPUと対戦するときに相手のデッキを選べるようにしてほしい」という
-	// フィードバックへの対応)。保存済みデッキの概念が無い分、構造はデッキ選択の
-	// 簡略版になっている。
+	// 対戦相手デッキ一覧: 自分のデッキ一覧と同じ全画面モーダルレイヤー方式
+	// (「CPUと対戦するときに相手のデッキを選べるようにしてほしい」という
+	// フィードバックへの対応)。保存済みデッキの概念が無い分、構造は自分のデッキ
+	// 一覧の簡略版になっている。「デッキ選択(親)」からのみ開かれ、この画面自体に
+	// 「閉じる」は置かない(行を選ぶとBattleSetupLayerへ自動的に戻る)。
 	AIDeckSelectLayer = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("AIDeckSelectLayer"));
 	AIDeckSelectLayer->SetBrushColor(FLinearColor(0.05f, 0.05f, 0.05f, 0.98f));
 	AIDeckSelectLayer->SetHorizontalAlignment(HAlign_Fill);
@@ -416,16 +447,13 @@ void UCGLobbyHUD::EnsureWidgetTreeBuilt()
 	}
 
 	UTextBlock* AIDeckSelectTitle = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("AIDeckSelectTitle"));
-	AIDeckSelectTitle->SetText(FText::FromString(TEXT("対戦相手デッキ")));
+	AIDeckSelectTitle->SetText(FText::FromString(TEXT("対戦相手のデッキ")));
 	AIDeckSelectTitle->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 28));
 	if (UHorizontalBoxSlot* AIDeckSelectTitleSlot = AIDeckSelectHeaderRow->AddChildToHorizontalBox(AIDeckSelectTitle))
 	{
 		AIDeckSelectTitleSlot->SetVerticalAlignment(VAlign_Center);
 		AIDeckSelectTitleSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 	}
-
-	UButton* CloseAIDeckSelectButton = MakeSmallButton(WidgetTree, TEXT("CloseAIDeckSelectButton"), TEXT("閉じる"), AIDeckSelectHeaderRow);
-	CloseAIDeckSelectButton->OnClicked.AddDynamic(this, &UCGLobbyHUD::HandleCloseAIDeckSelectClicked);
 
 	USizeBox* AIDeckSelectBodySizeBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("AIDeckSelectBodySizeBox"));
 	AIDeckSelectBodySizeBox->SetMaxDesiredWidth(600.f);
@@ -448,6 +476,71 @@ void UCGLobbyHUD::EnsureWidgetTreeBuilt()
 		AIDeckSelectBodySlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 		AIDeckSelectBodySlot->SetPadding(FMargin(24.f, 8.f));
 	}
+
+	// デッキ選択(親)画面: 「対戦開始」ボタンから開く。対戦相手・自分それぞれ
+	// 「今選ばれているデッキ」の情報表示のみを持ち、一覧はここには出さない
+	// (「選択」ボタンを押すとデッキを実際に選択できる画面(一覧)に遷移し、
+	// 選択するとこの画面に戻ってきて選択されたデッキが分かるようにしてほしい、
+	// というフィードバックへの対応。docs/architecture.md「ロビーのモーダル構成」参照)。
+	BattleSetupLayer = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("BattleSetupLayer"));
+	BattleSetupLayer->SetBrushColor(FLinearColor(0.05f, 0.05f, 0.05f, 0.98f));
+	BattleSetupLayer->SetHorizontalAlignment(HAlign_Fill);
+	BattleSetupLayer->SetVerticalAlignment(VAlign_Fill);
+	BattleSetupLayer->SetVisibility(ESlateVisibility::Collapsed);
+
+	UVerticalBox* BattleSetupRoot = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("BattleSetupRoot"));
+	BattleSetupLayer->AddChild(BattleSetupRoot);
+
+	UHorizontalBox* BattleSetupHeaderRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("BattleSetupHeaderRow"));
+	if (UVerticalBoxSlot* BattleSetupHeaderRowSlot = BattleSetupRoot->AddChildToVerticalBox(BattleSetupHeaderRow))
+	{
+		BattleSetupHeaderRowSlot->SetPadding(FMargin(24.f, 16.f, 24.f, 4.f));
+	}
+
+	UTextBlock* BattleSetupTitle = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("BattleSetupTitle"));
+	BattleSetupTitle->SetText(FText::FromString(TEXT("デッキ選択")));
+	BattleSetupTitle->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 28));
+	if (UHorizontalBoxSlot* BattleSetupTitleSlot = BattleSetupHeaderRow->AddChildToHorizontalBox(BattleSetupTitle))
+	{
+		BattleSetupTitleSlot->SetVerticalAlignment(VAlign_Center);
+		BattleSetupTitleSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+	}
+
+	UButton* CloseBattleSetupButton = MakeSmallButton(WidgetTree, TEXT("CloseBattleSetupButton"), TEXT("閉じる"), BattleSetupHeaderRow);
+	CloseBattleSetupButton->OnClicked.AddDynamic(this, &UCGLobbyHUD::HandleCloseBattleSetupClicked);
+
+	// 本体は「遊び方」「一覧画面」と同じく固定幅で中央に置く。
+	USizeBox* BattleSetupBodySizeBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("BattleSetupBodySizeBox"));
+	BattleSetupBodySizeBox->SetMaxDesiredWidth(600.f);
+
+	UVerticalBox* BattleSetupBody = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("BattleSetupBody"));
+	if (USizeBoxSlot* BattleSetupBodyInnerSlot = Cast<USizeBoxSlot>(BattleSetupBodySizeBox->AddChild(BattleSetupBody)))
+	{
+		BattleSetupBodyInnerSlot->SetHorizontalAlignment(HAlign_Fill);
+		BattleSetupBodyInnerSlot->SetVerticalAlignment(VAlign_Fill);
+	}
+
+	if (UVerticalBoxSlot* BattleSetupBodySlot = BattleSetupRoot->AddChildToVerticalBox(BattleSetupBodySizeBox))
+	{
+		BattleSetupBodySlot->SetHorizontalAlignment(HAlign_Center);
+		BattleSetupBodySlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+		BattleSetupBodySlot->SetPadding(FMargin(24.f, 8.f));
+	}
+
+	UButton* BattleSetupSelectAIButton = nullptr;
+	BattleSetupAIDeckSummaryText = AddDeckSummarySection(WidgetTree, BattleSetupBody, TEXT("BattleSetupAIHeading"),
+		TEXT("対戦相手のデッキ"), TEXT("BattleSetupAIRow"), TEXT("BattleSetupAIDeckSummaryText"),
+		TEXT("BattleSetupSelectAIButton"), BattleSetupSelectAIButton);
+	BattleSetupSelectAIButton->OnClicked.AddDynamic(this, &UCGLobbyHUD::HandleSelectAIDeckClicked);
+
+	UButton* BattleSetupSelectMyButton = nullptr;
+	BattleSetupMyDeckSummaryText = AddDeckSummarySection(WidgetTree, BattleSetupBody, TEXT("BattleSetupMyHeading"),
+		TEXT("自分のデッキ"), TEXT("BattleSetupMyRow"), TEXT("BattleSetupMyDeckSummaryText"),
+		TEXT("BattleSetupSelectMyButton"), BattleSetupSelectMyButton);
+	BattleSetupSelectMyButton->OnClicked.AddDynamic(this, &UCGLobbyHUD::HandleSelectMyDeckFromSummaryClicked);
+
+	UButton* ConfirmBattleSetupButton = MakeMenuButton(WidgetTree, TEXT("ConfirmBattleSetupButton"), TEXT("決定"), BattleSetupBody);
+	ConfirmBattleSetupButton->OnClicked.AddDynamic(this, &UCGLobbyHUD::HandleConfirmBattleSetupClicked);
 
 	// オンライン対戦(ホスト/参加): カード図鑑・遊び方・デッキ選択と同じ全画面
 	// モーダルレイヤー方式(docs/online-play-design.md「ロビー画面の変更点」)。
@@ -495,6 +588,16 @@ void UCGLobbyHUD::EnsureWidgetTreeBuilt()
 		OnlineBodySlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 		OnlineBodySlot->SetPadding(FMargin(24.f, 8.f));
 	}
+
+	// 自分のデッキ(「オンライン対戦でも同じような画面遷移がいい」という
+	// フィードバックへの対応)。対戦相手は人間のためAI側の選択は無い。「選択」で
+	// 自分のデッキ一覧(DeckSelectLayer、デッキ選択(親)と共通)へ遷移し、
+	// 選ぶとこの画面へ戻る。
+	UButton* OnlineSelectMyDeckButton = nullptr;
+	OnlineMyDeckSummaryText = AddDeckSummarySection(WidgetTree, OnlineBody, TEXT("OnlineMyDeckHeading"),
+		TEXT("自分のデッキ"), TEXT("OnlineMyDeckRow"), TEXT("OnlineMyDeckSummaryText"),
+		TEXT("OnlineSelectMyDeckButton"), OnlineSelectMyDeckButton);
+	OnlineSelectMyDeckButton->OnClicked.AddDynamic(this, &UCGLobbyHUD::HandleSelectMyDeckFromOnlineClicked);
 
 	// ホストする: 対戦レベルをリッスンサーバーとして開く。
 	UButton* HostButton = MakeMenuButton(WidgetTree, TEXT("HostGameButton"), TEXT("ホストする"), OnlineBody);
@@ -603,6 +706,11 @@ void UCGLobbyHUD::EnsureWidgetTreeBuilt()
 		AIDeckSelectStackSlot->SetHorizontalAlignment(HAlign_Fill);
 		AIDeckSelectStackSlot->SetVerticalAlignment(VAlign_Fill);
 	}
+	if (UOverlaySlot* BattleSetupStackSlot = ModalStack->AddChildToOverlay(BattleSetupLayer))
+	{
+		BattleSetupStackSlot->SetHorizontalAlignment(HAlign_Fill);
+		BattleSetupStackSlot->SetVerticalAlignment(VAlign_Fill);
+	}
 	if (UOverlaySlot* OnlineStackSlot = ModalStack->AddChildToOverlay(OnlineLayer))
 	{
 		OnlineStackSlot->SetHorizontalAlignment(HAlign_Fill);
@@ -619,9 +727,48 @@ void UCGLobbyHUD::HandleDeckBuilderClicked()
 	UGameplayStatics::OpenLevel(this, FName(DeckBuilderLevelPath));
 }
 
-void UCGLobbyHUD::HandleStartBattleClicked()
+void UCGLobbyHUD::HandleOpenBattleSetupClicked()
+{
+	BattleSetupLayer->SetVisibility(ESlateVisibility::Visible);
+	RefreshBattleSetupSummary();
+}
+
+void UCGLobbyHUD::HandleCloseBattleSetupClicked()
+{
+	BattleSetupLayer->SetVisibility(ESlateVisibility::Collapsed);
+}
+
+void UCGLobbyHUD::HandleConfirmBattleSetupClicked()
 {
 	UGameplayStatics::OpenLevel(this, FName(BattleLevelPath));
+}
+
+void UCGLobbyHUD::HandleSelectAIDeckClicked()
+{
+	// BattleSetupLayerはModalStack内でAIDeckSelectLayerより後に追加されており
+	// (=手前に描画される)、Collapsedにせず一覧側をVisibleにするだけだと
+	// 一覧がBattleSetupLayerの裏に隠れて何も変わって見えない
+	// (「選択ボタンを押しても画面が遷移しない」というフィードバックへの対応)。
+	PendingReturnLayer = BattleSetupLayer;
+	BattleSetupLayer->SetVisibility(ESlateVisibility::Collapsed);
+	AIDeckSelectLayer->SetVisibility(ESlateVisibility::Visible);
+	RefreshAIDeckSelectList();
+}
+
+void UCGLobbyHUD::HandleSelectMyDeckFromSummaryClicked()
+{
+	PendingReturnLayer = BattleSetupLayer;
+	BattleSetupLayer->SetVisibility(ESlateVisibility::Collapsed);
+	DeckSelectLayer->SetVisibility(ESlateVisibility::Visible);
+	RefreshDeckSelectList();
+}
+
+void UCGLobbyHUD::HandleSelectMyDeckFromOnlineClicked()
+{
+	PendingReturnLayer = OnlineLayer;
+	OnlineLayer->SetVisibility(ESlateVisibility::Collapsed);
+	DeckSelectLayer->SetVisibility(ESlateVisibility::Visible);
+	RefreshDeckSelectList();
 }
 
 UCGGameInstance* UCGLobbyHUD::GetCGGameInstance() const
@@ -629,15 +776,55 @@ UCGGameInstance* UCGLobbyHUD::GetCGGameInstance() const
 	return GetWorld() ? Cast<UCGGameInstance>(GetWorld()->GetGameInstance()) : nullptr;
 }
 
-void UCGLobbyHUD::HandleOpenDeckSelectClicked()
+void UCGLobbyHUD::RefreshBattleSetupSummary()
 {
-	DeckSelectLayer->SetVisibility(ESlateVisibility::Visible);
-	RefreshDeckSelectList();
+	if (BattleSetupAIDeckSummaryText)
+	{
+		BattleSetupAIDeckSummaryText->SetText(FText::FromString(GetAIDeckSummaryDisplayText()));
+	}
+	if (BattleSetupMyDeckSummaryText)
+	{
+		BattleSetupMyDeckSummaryText->SetText(FText::FromString(GetMyDeckSummaryDisplayText()));
+	}
 }
 
-void UCGLobbyHUD::HandleCloseDeckSelectClicked()
+void UCGLobbyHUD::RefreshOnlineMyDeckSummary()
 {
-	DeckSelectLayer->SetVisibility(ESlateVisibility::Collapsed);
+	if (OnlineMyDeckSummaryText)
+	{
+		OnlineMyDeckSummaryText->SetText(FText::FromString(GetMyDeckSummaryDisplayText()));
+	}
+}
+
+FString UCGLobbyHUD::GetAIDeckSummaryDisplayText() const
+{
+	UCGGameInstance* GI = GetCGGameInstance();
+	if (!GI)
+	{
+		return FString();
+	}
+	if (GI->SelectedAIOpponentColor != ECGColor::None)
+	{
+		const TArray<TPair<ECGColor, FString>>& BasicColors = GetBasicDeckColors();
+		for (const TPair<ECGColor, FString>& Entry : BasicColors)
+		{
+			if (Entry.Key == GI->SelectedAIOpponentColor)
+			{
+				return FString::Printf(TEXT("%s (%d枚)"), *Entry.Value, UCGCardDatabase::GetBasicColorDeckCardIds(Entry.Key).Num());
+			}
+		}
+	}
+	return TEXT("ランダム(5色から抽選) (25枚)");
+}
+
+FString UCGLobbyHUD::GetMyDeckSummaryDisplayText() const
+{
+	UCGGameInstance* GI = GetCGGameInstance();
+	if (!GI)
+	{
+		return FString();
+	}
+	return FString::Printf(TEXT("%s (%d枚)"), *GI->ActiveDeckName, GI->PlayerDeckCardIds.Num());
 }
 
 void UCGLobbyHUD::RefreshDeckSelectList()
@@ -720,7 +907,24 @@ void UCGLobbyHUD::HandleDeckSelectRowSelected(int32 SlotIndex)
 			}
 		}
 	}
-	RefreshDeckSelectList();
+
+	// 選んだ瞬間、呼び出し元(デッキ選択(親)またはオンライン対戦)へ自動的に戻る
+	// (「選択ボタンを押すとデッキを実際に選択できる画面に遷移して選択すると
+	// デッキ選択画面に戻ってきて選択されたデッキが選ばれている」という
+	// フィードバックへの対応。docs/architecture.md「ロビーのモーダル構成」参照)。
+	DeckSelectLayer->SetVisibility(ESlateVisibility::Collapsed);
+	if (PendingReturnLayer == OnlineLayer)
+	{
+		RefreshOnlineMyDeckSummary();
+	}
+	else if (PendingReturnLayer == BattleSetupLayer)
+	{
+		RefreshBattleSetupSummary();
+	}
+	if (PendingReturnLayer)
+	{
+		PendingReturnLayer->SetVisibility(ESlateVisibility::Visible);
+	}
 }
 
 void UCGLobbyHUD::HandleDeckSelectRowDeleted(int32 SlotIndex)
@@ -736,17 +940,6 @@ void UCGLobbyHUD::HandleDeckSelectRowDeleted(int32 SlotIndex)
 		GI->DeleteSavedDeck(SlotIndex);
 	}
 	RefreshDeckSelectList();
-}
-
-void UCGLobbyHUD::HandleOpenAIDeckSelectClicked()
-{
-	AIDeckSelectLayer->SetVisibility(ESlateVisibility::Visible);
-	RefreshAIDeckSelectList();
-}
-
-void UCGLobbyHUD::HandleCloseAIDeckSelectClicked()
-{
-	AIDeckSelectLayer->SetVisibility(ESlateVisibility::Collapsed);
 }
 
 void UCGLobbyHUD::RefreshAIDeckSelectList()
@@ -794,7 +987,14 @@ void UCGLobbyHUD::HandleAIDeckSelectRowSelected(int32 SlotIndex)
 			? ECGColor::None
 			: BasicColors[SlotIndex - 1].Key;
 	}
-	RefreshAIDeckSelectList();
+
+	// 対戦相手デッキ一覧はデッキ選択(親)からのみ開かれるため、常にそこへ戻る。
+	AIDeckSelectLayer->SetVisibility(ESlateVisibility::Collapsed);
+	RefreshBattleSetupSummary();
+	if (PendingReturnLayer)
+	{
+		PendingReturnLayer->SetVisibility(ESlateVisibility::Visible);
+	}
 }
 
 void UCGLobbyHUD::HandleOpenCodexClicked()
@@ -927,6 +1127,7 @@ void UCGLobbyHUD::HandleCloseHowToPlayClicked()
 
 void UCGLobbyHUD::HandleOpenOnlineClicked()
 {
+	RefreshOnlineMyDeckSummary();
 	if (OnlineStatusText)
 	{
 		OnlineStatusText->SetText(FText::GetEmpty());

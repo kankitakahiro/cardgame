@@ -16,7 +16,8 @@ Unreal Engine 5.8上のカードゲーム実装(`CardGame/Source/CardGame/`)の�
 | カードの効果 | [next-ruleset-cards-v1.md](next-ruleset-cards-v1.md)(5色76種+無色24種の全カードリスト) |
 | ゲームの世界観 | [カードゲーム 世界観・フレーバー設定.md](<カードゲーム 世界観・フレーバー設定.md>)(舞台設定・色ごとの国・カードのフレーバーテキスト例) |
 | ゲームの演出 | [presentation.md](presentation.md)(攻撃/カードプレイ/勝敗の演出、行動ログ等のHUDフィードバック) |
-| ゲームのキーワード | [keywords.md](keywords.md)(疾駆/庇護/封印/変貌/先物の定義一覧) |
+| ゲームのキーワード | [keywords.md](keywords.md)(疾駆/分身/庇護/封印/変貌/先物の定義一覧) |
+| バランス検証の手順 | [simulation-guide.md](simulation-guide.md)(自己対戦シミュレーションの実行コマンド・ログの読み方) |
 
 上記は「今のゲームがどうなっているか」を表す現在地のドキュメント。ルール設計の
 壁打ち経緯(next-ruleset-design.md)とカードバランス調整の実測ログ
@@ -47,18 +48,71 @@ UIも含めて全てC++で実装している(UMG WidgetTreeがPython Editor Scri
 ではない)。
 
 ```
-L_Lobby ──(デッキ構築)──> L_DeckBuilder ──(保存)──> L_Lobby ──(バトル開始)──> L_Card_GamePrototype ──(勝敗確定後、ロビーへ戻る)──> L_Lobby
+L_Lobby ──(デッキ構築)──> L_DeckBuilder ──(保存)──> L_Lobby ──(対戦開始→デッキ選択→決定)──> L_Card_GamePrototype ──(勝敗確定後、ロビーへ戻る)──> L_Lobby
 ```
 
 | レベル | GameMode | HUD | 役割 |
 |---|---|---|---|
-| `L_Lobby` | `ACGLobbyGameMode` | `UCGLobbyHUD` | 「デッキ構築」「デッキ選択」「対戦相手デッキ」「バトル開始」「カード図鑑」「遊び方」。デッキ選択/対戦相手デッキ/カード図鑑/遊び方はレベル遷移を伴わない全画面モーダルレイヤー(下記) |
+| `L_Lobby` | `ACGLobbyGameMode` | `UCGLobbyHUD` | 「デッキ構築」「対戦開始」「カード図鑑」「遊び方」「オンライン対戦」。対戦開始/カード図鑑/遊び方/オンライン対戦はレベル遷移を伴わない全画面モーダルレイヤー(下記) |
 | `L_DeckBuilder` | `ACGDeckBuilderGameMode` | `UCGDeckBuilderHUD` | 76種(次期ルール)から25枚(同名カード3枚まで重複可)を選ぶデッキ編成画面 |
-| `L_Card_GamePrototype` | `ACGGameMode` | `UCGGameHUD` | 対人1vsAI1の対戦本編 |
+| `L_Card_GamePrototype` | `ACGGameMode` | `UCGGameHUD` | 対人1vsAI1の対戦本編(オフライン/オンライン共通) |
 
 `ACGLobbyGameMode`/`ACGDeckBuilderGameMode` は対戦ロジックを持たない軽量GameMode
 で、`BeginPlay`から1フレーム遅延させてHUDを`AddToViewport`する点以外はほぼ同じ
 構成(`SetupHUD`+`FTimerHandle`)。
+
+#### ロビーのモーダル構成(デッキ選択の画面遷移)
+
+「CPUと対戦するときに相手のデッキを選べるようにしてほしい。ただし対戦ボタンを
+押した後に相手と自分のデッキを選択してから対戦が開始されるようにしてほしい」
+というフィードバックへの対応。単純に一覧を並べるのではなく、**親画面(情報表示)
+→一覧画面(選択)→親画面へ自動的に戻る**という一段掘り下げ(drill-down)構成に
+なっている(「デッキ選択画面には選択されているデッキの情報だけわかるように
+してほしい」という追加フィードバックへの対応)。
+
+```mermaid
+flowchart TD
+    Menu["メインメニュー"]
+    Summary["デッキ選択(親) = BattleSetupLayer
+対戦相手のデッキ: <選択中の表示>[選択]
+自分のデッキ: <選択中の表示>[選択]
+[決定]/[閉じる]"]
+    AIList["対戦相手デッキ一覧 = AIDeckSelectLayer
+ランダム+5色、選ぶと自動で戻る"]
+    MyList["自分のデッキ一覧 = DeckSelectLayer
+保存済み+基本、選ぶと自動で戻る"]
+    Online["オンライン対戦 = OnlineLayer
+自分のデッキ: <選択中の表示>[選択]
++ホストする/参加する"]
+    Battle["L_Card_GamePrototype"]
+
+    Menu -->|対戦開始| Summary
+    Summary -->|閉じる| Menu
+    Summary -->|対戦相手:選択| AIList
+    AIList -->|行を選択→自動で戻る| Summary
+    Summary -->|自分:選択| MyList
+    MyList -->|行を選択→自動で戻る| Summary
+    Summary -->|決定 常に有効| Battle
+
+    Menu -->|オンライン対戦| Online
+    Online -->|閉じる| Menu
+    Online -->|自分:選択| MyList
+    MyList -->|行を選択→自動で戻る| Online
+    Online -->|ホストする/参加する| Battle
+```
+
+- `BattleSetupLayer`(デッキ選択(親))と`OnlineLayer`は、選ばれているデッキの
+  **情報表示(名前+枚数)のみ**を持ち、一覧そのものは出さない。「選択」ボタンで
+  対応する一覧画面(`AIDeckSelectLayer`/`DeckSelectLayer`)へ遷移する。
+- `AIDeckSelectLayer`/`DeckSelectLayer`(一覧画面)自体には「閉じる」を置かない。
+  行を選ぶと`GameInstance`へ即座に反映し、そのままこの画面を閉じて呼び出し元へ
+  自動的に戻る(離脱手段は選ぶことのみ)。
+- `DeckSelectLayer`(自分のデッキ一覧)は`BattleSetupLayer`と`OnlineLayer`の
+  **両方から開かれる共通画面**。`UCGLobbyHUD::PendingReturnLayer`(一覧画面を
+  開く直前にセットする「戻り先」)で、選択後にどちらへ戻るかを決める。
+- 「決定」ボタン(`BattleSetupLayer`)は常に有効。一度も操作しなくても
+  `GameInstance`の現在値(前回の選択、既定はランダム/直近のアクティブデッキ)を
+  そのまま使って`OpenLevel(L_Card_GamePrototype)`する。
 
 ### デッキの永続化
 
@@ -82,11 +136,12 @@ L_Lobby ──(デッキ構築)──> L_DeckBuilder ──(保存)──> L_Lob
   デッキを自動生成する。
 - `UCGGameInstance::SelectedAIOpponentColor`(`ECGColor`): 対戦相手(AI、Side1)が
   使うデッキの色(「CPUと対戦するときに相手のデッキを選べるようにしてほしい」
-  というフィードバックへの対応)。`UCGLobbyHUD`の「対戦相手デッキ」画面(デッキ
-  選択と同じ全画面モーダルレイヤー方式だが、保存済みデッキの概念は無く
-  「ランダム+5色」の固定6択のみ)で選ぶとその場で直接この値が更新される。
-  既定値`ECGColor::None`は「ランダム」を表し、`ACGGameMode::InitializeMatch()`
-  はこれが`None`のときだけ以前と同じ5色ランダム抽選にフォールバックする。
+  というフィードバックへの対応)。「対戦開始」から開く「デッキ選択(親)」画面
+  (`BattleSetupLayer`)の「対戦相手のデッキ」→「選択」から一覧画面
+  (`AIDeckSelectLayer`、ランダム+5色の固定6択)を開いて選ぶと、その場で
+  直接この値が更新される(上記「ロビーのモーダル構成」参照)。既定値
+  `ECGColor::None`は「ランダム」を表し、`ACGGameMode::InitializeMatch()`は
+  これが`None`のときだけ以前と同じ5色ランダム抽選にフォールバックする。
   `PlayerDeckCardIds`と違いディスクへは永続化しない(アプリ再起動のたびに
   ランダムへ戻ってよいという判断)。
 
@@ -139,7 +194,11 @@ L_Lobby ──(デッキ構築)──> L_DeckBuilder ──(保存)──> L_Lob
   というデータのみで表現し、`CGTransformConditionId`(`CGTypes.h`)の6種類の
   条件を`ACGPlayerState`側(`ApplyTransformIfConditionMet`/`OnTurnStartTransformTick`/
   `CheckAllTransforms`)が汎用的に判定する。カードごとにHandle_XXX関数を書く
-  必要がなく、カードを増やす場合もデータ追加のみで済む。
+  必要がなく、カードを増やす場合もデータ追加のみで済む。**分身(緑)も同じ
+  考え方**で、`FCGCardDef::CloneConditionId`/`CloneConditionValue`と
+  `CGCloneConditionId`(`CGTypes.h`)を`ApplyCloneIfConditionMet`/`CheckAllClones`
+  が汎用的に判定する(コピーが持つ登場時効果自体は通常のディスパッチ
+  テーブル`GetUnitOnPlayEffectHandlers()`をそのまま再利用する)。
 - 同様に、ターン開始時に判定する常在効果は`ACGPlayerState::ApplyOnTurnStartAuraEffects()`
   が場のUnitを走査してEffectId(`OnTurnStartDraw`等)で判定する、
   `FEndTurnAuraEffectHandler`と対になる仕組み(`ACGGameMode::StartTurn()`から呼ぶ)。
@@ -163,8 +222,9 @@ L_Lobby ──(デッキ構築)──> L_DeckBuilder ──(保存)──> L_Lob
 | `FlavorText` | カード下部の短いフレーバーテキスト(世界観演出用、UI表示のみ) |
 | `EffectId`/`EffectValue` | 上記のカード効果ディスパッチで使うキーと数値パラメータ |
 | `Ratio` | バランス調整用の補助値(`initial-cards-v0.1.md`のManaRatio)。ゲームロジックの判定には使わない |
-| `Tags`(カンマ区切り文字列) + `HasTag()` | キーワード能力。`"Haste"`(速攻)/`"Guard"`(守護)に加え、次期ルールで`"Seal"`(封印)/`"Transform"`(変貌)/`"Discount"`(先物)を追加 |
+| `Tags`(カンマ区切り文字列) + `HasTag()` | キーワード能力。`"Haste"`(速攻)/`"Guard"`(庇護、現在は紫の護衛カードのみ)/`"Seal"`(封印)/`"Transform"`(変貌)/`"Discount"`(先物)/`"Clone"`(分身)の6種類(docs/keywords.md参照) |
 | `TransformTargetCardId`/`TransformConditionId`/`TransformConditionValue` | 変貌(紫)の変貌先CardId・条件種別(`CGTransformConditionId`)・条件値。`Transform`タグを持つカードのみ意味を持つ(上記「カード効果ディスパッチ」の変貌の項参照) |
+| `CloneConditionId`/`CloneConditionValue` | 分身(緑)の発動条件種別(`CGCloneConditionId`)・条件値。`Clone`タグを持つカードのみ意味を持つ。コピー先は常に自分自身のためターゲットCardIdは不要(`ACGPlayerState::PerformClone`参照) |
 
 **新しいキーワード(タグ)を追加する手順**: `Tags`に新しい文字列を足し、
 `ACGPlayerState::PlayCardFromHand()`(登場時の`bCanAttack`/`bHasGuard`相当の
@@ -425,4 +485,11 @@ Z順序で前面へ出す簡単な方法がない。そのため拡大表示は�
 - **変貌条件を増やす**: `CGTypes.h`の`CGTransformConditionId`に定数を追加し、
   `ACGPlayerState::ApplyTransformIfConditionMet()`に判定を1つ足す
   (ハンドラ登録は不要、上記「カード効果ディスパッチ」の変貌の項参照)。
+- **分身条件を増やす**: `CGTypes.h`の`CGCloneConditionId`に定数を追加し、
+  `CGPlayerState.cpp`無名namespace内の`GetCloneConditionPredicates()`テーブルに
+  判定関数を1行登録する。進行度(`FCGBoardUnit::CloneProgress`)を伴う条件は、
+  該当イベント発生時に`ACGGameMode`側(`ExecuteAttack`等)か
+  `ACGPlayerState::NotifyOwnLeaderHealed()`のような通知メソッドで
+  `CloneProgress`を+1する処理も必要(`ACGGameMode::NotifyStateChanged()`内の
+  `CheckAllClones()`が実際の分身を成立させる)。
 - **場のユニットに新しい状態を足す**: `FCGBoardUnit`にフィールドを追加。
