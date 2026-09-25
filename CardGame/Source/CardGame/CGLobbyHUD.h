@@ -15,10 +15,12 @@ class UEditableTextBox;
 class UBorder;
 struct FCGCardDef;
 
-// ロビー画面。「デッキ構築」「デッキ選択」(保存済みデッキから選ぶ)「バトル開始」に
-// 加え、全カードを検索/並び替えしながら
-// 眺められる「カード図鑑」、対戦ルールを説明する「遊び方」を持つ
-// (docs/architecture.md「レベルと画面遷移」)。UIはCGGameHUDと同じくC++側で
+// ロビー画面。「デッキ構築」「対戦開始」(押すと対戦相手・自分のデッキが今
+// 何になっているかを表示する「デッキ選択」画面が開き、そこから一覧画面へ
+// 遷移してデッキを選び直せる)に加え、全カードを検索/並び替えしながら眺められる
+// 「カード図鑑」、対戦ルールを説明する「遊び方」、自分のデッキを選んでから
+// ホスト/参加する「オンライン対戦」を持つ(docs/architecture.md「レベルと
+// 画面遷移」「ロビーのモーダル構成」)。UIはCGGameHUDと同じくC++側で
 // WidgetTreeを組み立てる(UMG編集の制約はdocs/automation-notes.md参照)。カード図鑑・
 // 遊び方はどちらもレベル遷移を伴わない全画面レイヤーとして実装しており
 // (UCGCardHostWidget::BuildRootOverlayのModalLayer、両方まとめて1つのUOverlayに
@@ -42,35 +44,53 @@ protected:
 	UFUNCTION()
 	void HandleDeckBuilderClicked();
 
+	// 「対戦開始」ボタン。以前はここで直ちにOpenLevelしていたが、「対戦ボタンを
+	// 押した後に相手と自分のデッキを選択してから対戦が開始されるようにして
+	// ほしい」というフィードバックへの対応で、まず対戦相手・自分それぞれの
+	// 「今選ばれているデッキ」を表示するだけの`BattleSetupLayer`を開く
+	// (docs/architecture.md「ロビーのモーダル構成」参照)。
 	UFUNCTION()
-	void HandleStartBattleClicked();
+	void HandleOpenBattleSetupClicked();
 
 	UFUNCTION()
-	void HandleOpenDeckSelectClicked();
+	void HandleCloseBattleSetupClicked();
 
+	// `BattleSetupLayer`の「決定」ボタン。実際のOpenLevelはここで行う
+	// (以前の`HandleStartBattleClicked`の中身)。
 	UFUNCTION()
-	void HandleCloseDeckSelectClicked();
+	void HandleConfirmBattleSetupClicked();
+
+	// `BattleSetupLayer`の対戦相手側「選択」ボタン。`AIDeckSelectLayer`
+	// (一覧画面)を開き、選んだら`BattleSetupLayer`へ自動的に戻ってくる
+	// (`PendingReturnLayer`参照)。
+	UFUNCTION()
+	void HandleSelectAIDeckClicked();
+
+	// `BattleSetupLayer`の自分側「選択」ボタン。`DeckSelectLayer`(一覧画面)を
+	// 開き、選んだら`BattleSetupLayer`へ自動的に戻ってくる。
+	UFUNCTION()
+	void HandleSelectMyDeckFromSummaryClicked();
+
+	// `OnlineLayer`の自分側「選択」ボタン。`DeckSelectLayer`を開き、選んだら
+	// `OnlineLayer`へ自動的に戻ってくる(自分のデッキ一覧はどちらの画面からも
+	// 開かれる共通画面。docs/architecture.md「ロビーのモーダル構成」参照)。
+	UFUNCTION()
+	void HandleSelectMyDeckFromOnlineClicked();
 
 	// UCGDeckListRowWidget::OnSelectClicked/OnDeleteClickedから、押された行の
 	// インデックス(=GameInstance::SavedDecksのインデックス)付きで呼ばれる。
+	// 選択後は`DeckSelectLayer`を閉じ、`PendingReturnLayer`(呼び出し元の
+	// `BattleSetupLayer`または`OnlineLayer`)へ自動的に戻る。
 	UFUNCTION()
 	void HandleDeckSelectRowSelected(int32 SlotIndex);
 
 	UFUNCTION()
 	void HandleDeckSelectRowDeleted(int32 SlotIndex);
 
-	// 対戦相手(AI)デッキ選択(「CPUと対戦するときに相手のデッキを選べるように
-	// してほしい」というフィードバックへの対応)。デッキ選択と同じ全画面モーダル
-	// レイヤー方式で、ランダム+5色の6択から選ぶ。
-	UFUNCTION()
-	void HandleOpenAIDeckSelectClicked();
-
-	UFUNCTION()
-	void HandleCloseAIDeckSelectClicked();
-
 	// UCGDeckListRowWidget::OnSelectClickedから、押された行のインデックスが
 	// 渡される。0=ランダム、1以上はGetBasicDeckColors()のインデックス+1
-	// (HandleAIDeckSelectRowSelected参照)。
+	// (HandleAIDeckSelectRowSelected参照)。選択後は`AIDeckSelectLayer`を閉じ、
+	// `PendingReturnLayer`(常に`BattleSetupLayer`)へ自動的に戻る。
 	UFUNCTION()
 	void HandleAIDeckSelectRowSelected(int32 SlotIndex);
 
@@ -185,10 +205,12 @@ private:
 	// 見出し+本文の1セクションを組み立ててRootへ追加する(遊び方画面専用)。
 	void AddHowToPlaySection(class UVerticalBox* Root, const FString& Heading, const FString& Body);
 
-	// デッキ選択(保存済みデッキの一覧から、バトルで使うデッキを選ぶ)。
-	// カード図鑑・遊び方と同じ全画面モーダルレイヤー方式(BuildRootOverlayの
-	// ModalLayer)。デッキ構築画面と違いレベル遷移しない
-	// (docs/architecture.md「デッキの永続化」)。
+	// 自分のデッキ一覧(保存済みデッキ+基本デッキから選ぶ)。カード図鑑・遊び方と
+	// 同じ全画面モーダルレイヤー方式(BuildRootOverlayのModalLayer)。デッキ構築
+	// 画面と違いレベル遷移しない(docs/architecture.md「デッキの永続化」)。
+	// `BattleSetupLayer`と`OnlineLayer`の両方から開かれる共通の一覧画面
+	// (docs/architecture.md「ロビーのモーダル構成」参照)。この画面自体には「閉じる」を
+	// 置かず、行を選ぶと`PendingReturnLayer`へ自動的に戻る。
 	UPROPERTY()
 	TObjectPtr<UBorder> DeckSelectLayer;
 
@@ -198,9 +220,10 @@ private:
 	// GameInstance::SavedDecksの内容でDeckSelectListContainerの中身を作り直す。
 	void RefreshDeckSelectList();
 
-	// 対戦相手(AI)デッキ選択。デッキ選択(自分用)と同じ全画面モーダルレイヤー
+	// 対戦相手(AI)デッキ一覧。自分のデッキ一覧と同じ全画面モーダルレイヤー
 	// 方式だが、保存済みデッキの概念は無く「ランダム+5色」の固定6択のみ
 	// (docs/architecture.md「デッキの永続化」の`SelectedAIOpponentColor`参照)。
+	// `BattleSetupLayer`からのみ開かれ、行を選ぶと自動的に戻る。
 	UPROPERTY()
 	TObjectPtr<UBorder> AIDeckSelectLayer;
 
@@ -210,6 +233,43 @@ private:
 	// GameInstance::SelectedAIOpponentColorの内容でAIDeckSelectListContainerの
 	// 中身(ランダム+5色、現在選択中のものをハイライト)を作り直す。
 	void RefreshAIDeckSelectList();
+
+	// 対戦準備(「デッキ選択」画面、docs/architecture.md「ロビーのモーダル構成」参照)。
+	// ロビーの「対戦開始」ボタンから開く全画面モーダルで、対戦相手・自分それぞれ
+	// 「今選ばれているデッキ」の情報表示(名前+枚数)のみを持ち、一覧はここには
+	// 出さない。「選択」ボタンでそれぞれの一覧画面(AIDeckSelectLayer/
+	// DeckSelectLayer)へ遷移し、選び終えるとこの画面へ戻ってくる。
+	UPROPERTY()
+	TObjectPtr<UBorder> BattleSetupLayer;
+
+	UPROPERTY()
+	TObjectPtr<UTextBlock> BattleSetupAIDeckSummaryText;
+
+	UPROPERTY()
+	TObjectPtr<UTextBlock> BattleSetupMyDeckSummaryText;
+
+	// BattleSetupLayerの表示内容(対戦相手・自分それぞれの現在の選択)を
+	// GameInstanceから読み直す。開いたとき、および一覧画面から戻ってきたときに呼ぶ。
+	void RefreshBattleSetupSummary();
+
+	// OnlineLayer内の「自分のデッキ」情報表示(BattleSetupAIDeckSummaryTextの
+	// 自分側と同じ考え方)。
+	UPROPERTY()
+	TObjectPtr<UTextBlock> OnlineMyDeckSummaryText;
+
+	void RefreshOnlineMyDeckSummary();
+
+	// 現在のGameInstance::SelectedAIOpponentColor/PlayerDeckCardIdsを
+	// 「表示名 (N枚)」の形式で返す(情報表示用。一覧行の表記と統一する)。
+	FString GetAIDeckSummaryDisplayText() const;
+	FString GetMyDeckSummaryDisplayText() const;
+
+	// DeckSelectLayer/AIDeckSelectLayer(一覧画面)を開く直前にセットしておく、
+	// 「選び終えたら戻る先」のレイヤー。この画面自体は「閉じる」を持たず、
+	// 行を選ぶことでしか離脱できないため、戻り先を必ず1つ覚えておく必要がある
+	// (自分のデッキ一覧はBattleSetupLayer/OnlineLayerの2箇所から開かれ得るため)。
+	UPROPERTY()
+	TObjectPtr<UBorder> PendingReturnLayer;
 
 	// オンライン対戦(ホスト/参加)の全画面モーダルレイヤー(docs/online-play-
 	// design.md「ロビー画面の変更点」)。カード図鑑・遊び方・デッキ選択と同じ方式。

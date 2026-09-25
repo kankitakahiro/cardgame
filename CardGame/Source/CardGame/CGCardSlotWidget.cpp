@@ -353,6 +353,10 @@ void UCGCardSlotWidget::SetCardData(const FCGCardDef& Def, TOptional<int32> Over
 	{
 		TribeLineParts.Add(TEXT("▲先物"));
 	}
+	if (Def.HasTag(TEXT("Clone")))
+	{
+		TribeLineParts.Add(TEXT("◇分身"));
+	}
 	if (Def.HasTag(TEXT("Finisher")))
 	{
 		TribeLineParts.Add(TEXT("★フィニッシャー"));

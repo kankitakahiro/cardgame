@@ -6,7 +6,8 @@ namespace
 		int32 Atk, int32 Hp, const TCHAR* EffectId, int32 EffectValue, float Ratio, const TCHAR* Tags,
 		const TCHAR* Description, const TCHAR* Tribe = TEXT(""), const TCHAR* FlavorText = TEXT(""),
 		const TCHAR* TransformTargetCardId = TEXT(""), const TCHAR* TransformConditionId = TEXT(""),
-		int32 TransformConditionValue = 0)
+		int32 TransformConditionValue = 0, const TCHAR* CloneConditionId = TEXT(""),
+		int32 CloneConditionValue = 0)
 	{
 		FCGCardDef Card;
 		Card.CardId = FName(CardId);
@@ -28,6 +29,11 @@ namespace
 			Card.TransformTargetCardId = FName(TransformTargetCardId);
 			Card.TransformConditionId = FName(TransformConditionId);
 			Card.TransformConditionValue = TransformConditionValue;
+		}
+		if (FCString::Strlen(CloneConditionId) > 0)
+		{
+			Card.CloneConditionId = FName(CloneConditionId);
+			Card.CloneConditionValue = CloneConditionValue;
 		}
 		return Card;
 	}
@@ -97,8 +103,12 @@ namespace
 	{
 		static const TArray<FCGCardDef> Cards = {
 			// --- 赤(速攻/バーン)— 疾駆 ---
-			MakeCard(TEXT("R01"), TEXT("火口の悪童"), ECGCardType::Unit, ECGColor::Red, 1, 2, 1, CGEffectId::None, 0, 0.f, TEXT(""),
-				TEXT("")),
+			// 500戦シミュレーションで赤の15種がほぼ全て50%超えとなり(色全体の
+			// 底上げ)、中でも1コストのバニラとしては効率が良すぎたためAtk2→1に
+			// 調整した。さらに「バニラを無くしたい」というフィードバックを受けて
+			// 死亡時効果を追加した(docs/next-ruleset-cards-v1.md「赤」参照)。
+			MakeCard(TEXT("R01"), TEXT("火口の悪童"), ECGCardType::Unit, ECGColor::Red, 1, 1, 1, CGEffectId::OnDeathDamageRandomEnemyUnit1, 1, 0.f, TEXT(""),
+				TEXT("死亡時、敵のランダムなUnit1体に1ダメージ")),
 			MakeCard(TEXT("R02"), TEXT("導火線"), ECGCardType::Spell, ECGColor::Red, 1, 0, 0, CGEffectId::OnPlayDamageTarget, 1, 0.f, TEXT(""),
 				TEXT("敵Unit1体、または敵リーダーへ1ダメージ")),
 			MakeCard(TEXT("R03"), TEXT("焼印の斥候"), ECGCardType::Unit, ECGColor::Red, 1, 1, 1, CGEffectId::None, 0, 0.f, TEXT("Haste"),
@@ -131,16 +141,20 @@ namespace
 			// --- 橙(購入加速)— 先物 ---
 			MakeCard(TEXT("O01"), TEXT("目利きの一手"), ECGCardType::Spell, ECGColor::Orange, 1, 0, 0, CGEffectId::GrantPurchaseMana, 1, 0.f, TEXT(""),
 				TEXT("コインを1増加")),
-			MakeCard(TEXT("O02"), TEXT("露店の商人"), ECGCardType::Unit, ECGColor::Orange, 1, 1, 2, CGEffectId::None, 0, 0.f, TEXT(""),
-				TEXT("")),
+			// バニラを無くしたいというフィードバックで先物(Discount)を付与。
+			// 先物キーワード自体を「次の購入コストを1軽減」から「登場時コインを1増加」に
+			// 変更したため(docs/keywords.md「先物」参照)、この変更でO03/O06/O11/O14の
+			// 効果も同様に変わる。ステータスはキーワード追加分を相殺して1/2→1/1に調整。
+			MakeCard(TEXT("O02"), TEXT("露店の商人"), ECGCardType::Unit, ECGColor::Orange, 1, 1, 1, CGEffectId::None, 0, 0.f, TEXT("Discount"),
+				TEXT("先物")),
 			MakeCard(TEXT("O03"), TEXT("先物師の弟子"), ECGCardType::Unit, ECGColor::Orange, 2, 2, 2, CGEffectId::None, 0, 0.f, TEXT("Discount"),
-				TEXT("先物: 登場時、次の購入のコストを1軽減")),
+				TEXT("先物: 登場時、コインを1増やす")),
 			MakeCard(TEXT("O04"), TEXT("市場の噂話"), ECGCardType::Spell, ECGColor::Orange, 2, 0, 0, CGEffectId::RerollMarketSlot, 0, 0.f, TEXT(""),
 				TEXT("マーケットの好きな1枠を即座に補充し直す")),
 			MakeCard(TEXT("O05"), TEXT("値切りの番人"), ECGCardType::Unit, ECGColor::Orange, 2, 1, 2, CGEffectId::OnBuyBuffSelfAtk, 1, 0.f, TEXT(""),
 				TEXT("自分が購入するたび、このユニットは+1/+0(「このターン中」は簡略化して永続にしている)")),
 			MakeCard(TEXT("O06"), TEXT("相場読みの商人"), ECGCardType::Unit, ECGColor::Orange, 3, 3, 3, CGEffectId::None, 0, 0.f, TEXT("Discount"),
-				TEXT("先物: 登場時、次の購入のコストを1軽減")),
+				TEXT("先物: 登場時、コインを1増やす")),
 			MakeCard(TEXT("O07"), TEXT("即断の商談"), ECGCardType::Spell, ECGColor::Orange, 3, 0, 0, CGEffectId::BuyFromMarketCostUnder3ToHand, 5, 0.f, TEXT(""),
 				TEXT("コスト5以下のマーケットカードを1枚購入し、即座に手札へ")),
 			MakeCard(TEXT("O08"), TEXT("先読みの相場師"), ECGCardType::Unit, ECGColor::Orange, 3, 3, 2, CGEffectId::OnTurnStartGrantPurchaseMana, 1, 0.f, TEXT(""),
@@ -160,37 +174,63 @@ namespace
 			MakeCard(TEXT("O15"), TEXT("独占商人"), ECGCardType::Unit, ECGColor::Orange, 6, 6, 6, CGEffectId::OnPlayDeployFromMarketFree, -1, 0.f, TEXT(""),
 				TEXT("登場時、マーケットから1枚、コストを支払わず場に出す")),
 
-			// --- 緑(物量/守護/回復)— 庇護 ---
-			MakeCard(TEXT("G01"), TEXT("若木の番人"), ECGCardType::Unit, ECGColor::Green, 1, 1, 1, CGEffectId::None, 0, 0.f, TEXT("Guard"),
-				TEXT("庇護")),
+			// --- 緑(物量/分身/回復)— 分身 ---
+			// 500戦シミュレーションで緑が59.9%と突出したため分身持ち7種を1段階
+			// 弱体化したところ、今度は40.4%まで下がりすぎたため、その1段階分を
+			// 巻き戻した(G11の差し替えはそのまま維持。docs/next-ruleset-cards-v1.md
+			// 「緑」参照)。
+			MakeCard(TEXT("G01"), TEXT("若木の番人"), ECGCardType::Unit, ECGColor::Green, 1, 1, 1, CGEffectId::None, 0, 0.f, TEXT("Clone"),
+				TEXT("分身: 場に味方Unitが2体以上いるとき、素の状態のコピーを1体出す(このユニットにつき1回)"),
+				TEXT(""), TEXT(""), TEXT(""), TEXT(""), 0, CGCloneConditionId::AllyUnitCountAtLeast, 2),
 			MakeCard(TEXT("G02"), TEXT("癒しの若葉"), ECGCardType::Spell, ECGColor::Green, 1, 0, 0, CGEffectId::SummonApprenticeTokens, 2, 0.f, TEXT(""),
-				TEXT("1/1のUnitを2体出す")),
-			MakeCard(TEXT("G03"), TEXT("熊の盾持ち"), ECGCardType::Unit, ECGColor::Green, 2, 2, 2, CGEffectId::None, 0, 0.f, TEXT("Guard"),
-				TEXT("庇護")),
-			MakeCard(TEXT("G04"), TEXT("森の猪"), ECGCardType::Unit, ECGColor::Green, 2, 2, 3, CGEffectId::None, 0, 0.f, TEXT(""),
-				TEXT("")),
+				TEXT("0/1のUnitを2体出す")),
+			MakeCard(TEXT("G03"), TEXT("熊の盾持ち"), ECGCardType::Unit, ECGColor::Green, 2, 1, 2, CGEffectId::None, 0, 0.f, TEXT("Clone"),
+				TEXT("分身: このユニットが攻撃を受けて生き残ったとき、素の状態のコピーを1体出す(このユニットにつき1回)"),
+				TEXT(""), TEXT(""), TEXT(""), TEXT(""), 0, CGCloneConditionId::SurvivedAttack, 1),
+			// 3000戦シミュレーションでキーワード無しのバニラながら64.0%と緑の中でも
+			// 最上位だったため、素のステータスを下げる代わりに条件付きバフを持たせた
+			// (docs/next-ruleset-cards-v1.md「緑」参照)。
+			MakeCard(TEXT("G04"), TEXT("森の猪"), ECGCardType::Unit, ECGColor::Green, 2, 1, 2, CGEffectId::OnPlaySelfBuffAtkIfAlliesPresent, 1, 0.f, TEXT(""),
+				TEXT("登場時、場に他の味方Unitが3体以上いるなら自身が+1/+0")),
 			MakeCard(TEXT("G05"), TEXT("群れの誕生"), ECGCardType::Spell, ECGColor::Green, 2, 0, 0, CGEffectId::SummonToughApprenticeTokens, 2, 0.f, TEXT(""),
-				TEXT("1/2のUnitを2体出す")),
-			MakeCard(TEXT("G06"), TEXT("聖樹の守護者"), ECGCardType::Unit, ECGColor::Green, 3, 2, 3, CGEffectId::OnPlayHealSelf, 2, 0.f, TEXT("Guard"),
-				TEXT("庇護。登場時、味方リーダーを2回復")),
-			MakeCard(TEXT("G07"), TEXT("猛る大鹿"), ECGCardType::Unit, ECGColor::Green, 3, 4, 4, CGEffectId::None, 0, 0.f, TEXT(""),
-				TEXT("")),
+				TEXT("1/1のUnitを2体出す")),
+			MakeCard(TEXT("G06"), TEXT("聖樹の守護者"), ECGCardType::Unit, ECGColor::Green, 3, 1, 3, CGEffectId::OnPlayHealSelf, 1, 0.f, TEXT("Clone"),
+				TEXT("登場時、味方リーダーを1回復。分身: 場に味方Unitが2体以上いるとき、素の状態のコピーを1体出す(このユニットにつき1回)"),
+				TEXT(""), TEXT(""), TEXT(""), TEXT(""), 0, CGCloneConditionId::AllyUnitCountAtLeast, 2),
+			// 3000戦シミュレーションでキーワード無しのバニラながら65.3%と緑最強格
+			// だったため、素のステータスを大きく下げて分身+庇護を持たせた。庇護は
+			// 「紫に多いが他色にも例外的に付いてよい」という方針のもと、緑にも
+			// 意図的に1枚だけ残している(docs/keywords.md「庇護」参照)。
+			MakeCard(TEXT("G07"), TEXT("猛る大鹿"), ECGCardType::Unit, ECGColor::Green, 3, 1, 2, CGEffectId::None, 0, 0.f, TEXT("Clone,Guard"),
+				TEXT("庇護。分身: 自分のリーダーの体力が10以下のとき、素の状態のコピーを1体出す(このユニットにつき1回)"),
+				TEXT(""), TEXT(""), TEXT(""), TEXT(""), 0, CGCloneConditionId::LeaderHpAtMost, 10),
 			MakeCard(TEXT("G08"), TEXT("森の恵み"), ECGCardType::Spell, ECGColor::Green, 3, 0, 0, CGEffectId::BuffAllAlliesAtkOnly, 1, 0.f, TEXT(""),
 				TEXT("場のUnitすべてのステータスを+1/+0")),
-			MakeCard(TEXT("G09"), TEXT("巨石の壁役"), ECGCardType::Unit, ECGColor::Green, 4, 3, 4, CGEffectId::None, 0, 0.f, TEXT("Guard"),
-				TEXT("庇護")),
+			MakeCard(TEXT("G09"), TEXT("巨石の壁役"), ECGCardType::Unit, ECGColor::Green, 4, 2, 4, CGEffectId::None, 0, 0.f, TEXT("Clone"),
+				TEXT("分身: 場に味方Unitが3体以上いるとき、素の状態のコピーを1体出す(このユニットにつき1回)"),
+				TEXT(""), TEXT(""), TEXT(""), TEXT(""), 0, CGCloneConditionId::AllyUnitCountAtLeast, 3),
 			MakeCard(TEXT("G10"), TEXT("群像の雄叫び"), ECGCardType::Unit, ECGColor::Green, 4, 3, 4, CGEffectId::OnPlayBuffSelfIfAlliesPresent, 2, 0.f, TEXT(""),
 				TEXT("登場時、場に他の味方Unitが3体以上いるなら自身が+2/+2")),
-			MakeCard(TEXT("G11"), TEXT("大群の号令"), ECGCardType::Spell, ECGColor::Green, 3, 0, 0, CGEffectId::SummonApprenticeTokens, 3, 0.f, TEXT(""),
-				TEXT("1/1のUnitを3体出す")),
-			MakeCard(TEXT("G12"), TEXT("不屈の大樹"), ECGCardType::Unit, ECGColor::Green, 5, 4, 6, CGEffectId::OnDefendHealSelf1, 0, 0.f, TEXT("Guard"),
-				TEXT("庇護。このユニットが攻撃を受けるたび、味方リーダーを1回復")),
-			MakeCard(TEXT("G13"), TEXT("森の巨人"), ECGCardType::Unit, ECGColor::Green, 5, 6, 5, CGEffectId::None, 0, 0.f, TEXT("Guard"),
-				TEXT("庇護")),
-			MakeCard(TEXT("G14"), TEXT("大地の祝福"), ECGCardType::Spell, ECGColor::Green, 5, 0, 0, CGEffectId::BuffAllAlliesFlat, 2, 0.f, TEXT(""),
-				TEXT("場の味方Unit全てを+2/+2")),
-			MakeCard(TEXT("G15"), TEXT("万象の守り神"), ECGCardType::Unit, ECGColor::Green, 6, 6, 6, CGEffectId::OnPlayHealSelf, 3, 0.f, TEXT("Guard"),
-				TEXT("庇護。登場時、味方リーダーを3回復")),
+			// トークン生成スペルが強すぎるというフィードバックへの対応で「大群の号令」を
+			// 削除し、自分の場のUnit数を参照する除去スペルに差し替えた。物量(Unit数)を
+			// 攻撃力に転換する役割にすることで、分身と組み合わせたときの物量シナジーを
+			// 保ちつつ、トークン展開そのものは増やさない。
+			MakeCard(TEXT("G11"), TEXT("群れの猛攻"), ECGCardType::Spell, ECGColor::Green, 3, 0, 0, CGEffectId::OnPlayDamageTargetByAllyUnitCount, 0, 0.f, TEXT(""),
+				TEXT("自分の場にいるUnitの数だけ、敵Unit1体にダメージを与える")),
+			MakeCard(TEXT("G12"), TEXT("不屈の大樹"), ECGCardType::Unit, ECGColor::Green, 5, 3, 5, CGEffectId::OnDefendHealSelf1, 0, 0.f, TEXT("Clone"),
+				TEXT("このユニットが攻撃を受けるたび、味方リーダーを1回復。分身: 味方リーダーが回復したとき、素の状態のコピーを1体出す(このユニットにつき1回)"),
+				TEXT(""), TEXT(""), TEXT(""), TEXT(""), 0, CGCloneConditionId::LeaderHealed, 1),
+			MakeCard(TEXT("G13"), TEXT("森の巨人"), ECGCardType::Unit, ECGColor::Green, 5, 4, 4, CGEffectId::None, 0, 0.f, TEXT("Clone"),
+				TEXT("分身: このユニットが攻撃して生き残ったとき、素の状態のコピーを1体出す(このユニットにつき1回)"),
+				TEXT(""), TEXT(""), TEXT(""), TEXT(""), 0, CGCloneConditionId::AttackedAndSurvived, 1),
+			// 500戦シミュレーションで66.2%と緑の中でも最強だったため+2/+2→+1/+1に
+			// 調整した(分身/トークンで横に並べる緑と全体バフの相性が良すぎた。
+			// docs/next-ruleset-cards-v1.md「緑」参照)。
+			MakeCard(TEXT("G14"), TEXT("大地の祝福"), ECGCardType::Spell, ECGColor::Green, 5, 0, 0, CGEffectId::BuffAllAlliesFlat, 1, 0.f, TEXT(""),
+				TEXT("場の味方Unit全てを+1/+1")),
+			MakeCard(TEXT("G15"), TEXT("万象の守り神"), ECGCardType::Unit, ECGColor::Green, 6, 4, 5, CGEffectId::OnPlayHealSelf, 2, 0.f, TEXT("Clone"),
+				TEXT("登場時、味方リーダーを2回復。分身: 場に味方Unitが4体以上いるとき、素の状態のコピーを1体出す(このユニットにつき1回)"),
+				TEXT(""), TEXT(""), TEXT(""), TEXT(""), 0, CGCloneConditionId::AllyUnitCountAtLeast, 4),
 
 			// --- 青(除去/追放)— 封印 ---
 			MakeCard(TEXT("B01"), TEXT("小さな封緘"), ECGCardType::Spell, ECGColor::Blue, 1, 0, 0, CGEffectId::SealSpell, 1, 0.f, TEXT("Seal"),
@@ -207,8 +247,13 @@ namespace
 				TEXT("封印。敵Unit1体を封印する(コスト制限なし)")),
 			MakeCard(TEXT("B07"), TEXT("追放の審判官"), ECGCardType::Unit, ECGColor::Blue, 3, 1, 3, CGEffectId::SealOnPlay, 3, 0.f, TEXT("Seal"),
 				TEXT("封印。登場時、コスト3以下の敵Unit1体を封印する")),
-			MakeCard(TEXT("B08"), TEXT("霧の壁"), ECGCardType::Unit, ECGColor::Blue, 3, 2, 5, CGEffectId::None, 0, 0.f, TEXT(""),
-				TEXT("")),
+			// ドキュメントには元々「0/4、封印するたびに1ドロー」と設計されていたが
+			// 実装が漏れてバニラ(2/5)のままだった。「バニラを無くしたい」という
+			// フィードバックを機に、ドキュメント通りの効果を実装した。その後、
+			// 3000戦シミュレーションで赤vs青が78%まで偏った(Atk0で反撃できない
+			// ことがアグロに弱い一因と推測)ため、Atkだけ0→1に戻した。
+			MakeCard(TEXT("B08"), TEXT("霧の壁"), ECGCardType::Unit, ECGColor::Blue, 3, 1, 4, CGEffectId::OnSealDraw1, 0, 0.f, TEXT(""),
+				TEXT("封印するたびに1ドロー")),
 			MakeCard(TEXT("B09"), TEXT("叡智の追放"), ECGCardType::Spell, ECGColor::Blue, 4, 0, 0, CGEffectId::SealSpellGrantPurchaseMana, -1, 0.f, TEXT("Seal"),
 				TEXT("封印。敵Unit1体を封印し、コインを1増加")),
 			MakeCard(TEXT("B10"), TEXT("衰弱の監視者"), ECGCardType::Unit, ECGColor::Blue, 4, 3, 4, CGEffectId::EndTurnDebuffHighestCostEnemy, -2, 0.f, TEXT(""),
@@ -232,48 +277,51 @@ namespace
 			// 変貌元Unitの素のHPを+1して除去耐性を上げ、変貌先Unitのステータスを
 			// +1/+1して「変貌が完了した後の見返り」自体も底上げする、という
 			// 2段構えの底上げを全体に適用した(第20回)。
-			MakeCard(TEXT("P01"), TEXT("無垢の使い魔"), ECGCardType::Unit, ECGColor::Purple, 1, 1, 3, CGEffectId::None, 0, 0.f, TEXT("Transform"),
+			MakeCard(TEXT("P01"), TEXT("無垢の使い魔"), ECGCardType::Unit, ECGColor::Purple, 1, 1, 2, CGEffectId::None, 0, 0.f, TEXT("Transform"),
 				TEXT("変貌: 自分のターンを2回経過すると「若き賢者」に変貌"),
 				TEXT(""), TEXT(""), TEXT("P01T"), CGTransformConditionId::TurnsInPlay, 2),
 			MakeCard(TEXT("P02"), TEXT("秘めた才能"), ECGCardType::Spell, ECGColor::Purple, 1, 0, 0, CGEffectId::BuffAllyTarget, 1, 0.f, TEXT(""),
 				TEXT("味方Unit1体を+1/+1する")),
-			MakeCard(TEXT("P03"), TEXT("若き見習い"), ECGCardType::Unit, ECGColor::Purple, 2, 0, 4, CGEffectId::None, 0, 0.f, TEXT("Transform"),
+			MakeCard(TEXT("P03"), TEXT("若き見習い"), ECGCardType::Unit, ECGColor::Purple, 2, 0, 3, CGEffectId::None, 0, 0.f, TEXT("Transform"),
 				TEXT("変貌: 対象指定の味方強化を2回受けると「歴戦の使い魔」に変貌"),
 				TEXT(""), TEXT(""), TEXT("P03T"), CGTransformConditionId::BuffedCount, 2),
 			MakeCard(TEXT("P04"), TEXT("祝福の詠唱"), ECGCardType::Spell, ECGColor::Purple, 2, 0, 0, CGEffectId::BuffAllyTarget, 2, 0.f, TEXT(""),
 				TEXT("味方Unit1体を+2/+2する")),
-			MakeCard(TEXT("P05"), TEXT("導きの魔女"), ECGCardType::Unit, ECGColor::Purple, 2, 2, 3, CGEffectId::OnPlayBuffAllyTarget, 1, 0.f, TEXT(""),
-				TEXT("登場時、味方Unit1体を+1/+1する(元の設計は+1/+2だが対称なバフに簡略化)")),
-			MakeCard(TEXT("P06"), TEXT("封じられし魔物"), ECGCardType::Unit, ECGColor::Purple, 3, 2, 4, CGEffectId::None, 0, 0.f, TEXT("Transform"),
+			// 護衛(庇護): 変貌が完了するまでの投資(P01/P03等)を守るための紫の護衛ユニット
+			// (docs/next-ruleset-cards-v1.md「紫」。「変貌した後に庇護を付けるというより、
+			// 変貌前のカードを守るために庇護を持ったカードを用意する」というフィードバックへの対応)。
+			MakeCard(TEXT("P05"), TEXT("導きの魔女"), ECGCardType::Unit, ECGColor::Purple, 2, 2, 2, CGEffectId::OnPlayBuffAllyTarget, 1, 0.f, TEXT("Guard"),
+				TEXT("庇護。登場時、味方Unit1体を+1/+1する(元の設計は+1/+2だが対称なバフに簡略化)")),
+			MakeCard(TEXT("P06"), TEXT("封じられし魔物"), ECGCardType::Unit, ECGColor::Purple, 3, 2, 3, CGEffectId::None, 0, 0.f, TEXT("Transform"),
 				TEXT("変貌: 手札が4枚以下になると「解放された魔物」に変貌"),
 				TEXT(""), TEXT(""), TEXT("P06T"), CGTransformConditionId::HandSizeAtMost, 4),
 			MakeCard(TEXT("P07"), TEXT("大いなる変容"), ECGCardType::Spell, ECGColor::Purple, 3, 0, 0, CGEffectId::BuffAllyTarget, 3, 0.f, TEXT(""),
 				TEXT("味方Unit1体を+3/+3する")),
-			MakeCard(TEXT("P08"), TEXT("静かなる怪物"), ECGCardType::Unit, ECGColor::Purple, 3, 2, 6, CGEffectId::None, 0, 0.f, TEXT("Transform"),
+			MakeCard(TEXT("P08"), TEXT("静かなる怪物"), ECGCardType::Unit, ECGColor::Purple, 3, 2, 5, CGEffectId::None, 0, 0.f, TEXT("Transform"),
 				TEXT("変貌: 場に2ターンいると「目覚めた怪物」に変貌"),
 				TEXT(""), TEXT(""), TEXT("P08T"), CGTransformConditionId::TurnsInPlay, 2),
-			MakeCard(TEXT("P09"), TEXT("眠れる怒り"), ECGCardType::Unit, ECGColor::Purple, 4, 3, 6, CGEffectId::None, 0, 0.f, TEXT("Transform"),
+			MakeCard(TEXT("P09"), TEXT("眠れる怒り"), ECGCardType::Unit, ECGColor::Purple, 4, 3, 5, CGEffectId::None, 0, 0.f, TEXT("Transform"),
 				TEXT("変貌: 味方Unitが2体死亡すると「憤怒の権化」に変貌"),
 				TEXT(""), TEXT(""), TEXT("P09T"), CGTransformConditionId::AlliesDiedSinceSummon, 2),
 			MakeCard(TEXT("P10"), TEXT("深淵の契約"), ECGCardType::Spell, ECGColor::Purple, 4, 0, 0, CGEffectId::BuffAllyTargetAndDraw, 3, 0.f, TEXT(""),
 				TEXT("味方Unit1体を+3/+3し、1ドローする")),
-			MakeCard(TEXT("P11"), TEXT("予見の魔導師"), ECGCardType::Unit, ECGColor::Purple, 4, 3, 5, CGEffectId::OnPlayGrantNextUnitPlayDiscount, 2, 0.f, TEXT(""),
-				TEXT("登場時、次にプレイするUnit1体のコストを2軽減する(元の設計は「手札の特定カードを軽減」だが、同名重複カードを区別する仕組みが無いため簡略化)")),
-			MakeCard(TEXT("P12"), TEXT("胎動する秘術"), ECGCardType::Unit, ECGColor::Purple, 5, 3, 7, CGEffectId::None, 0, 0.f, TEXT("Transform"),
+			MakeCard(TEXT("P11"), TEXT("予見の魔導師"), ECGCardType::Unit, ECGColor::Purple, 4, 3, 4, CGEffectId::OnPlayGrantNextUnitPlayDiscount, 2, 0.f, TEXT("Guard"),
+				TEXT("庇護。登場時、次にプレイするUnit1体のコストを2軽減する(元の設計は「手札の特定カードを軽減」だが、同名重複カードを区別する仕組みが無いため簡略化)")),
+			MakeCard(TEXT("P12"), TEXT("胎動する秘術"), ECGCardType::Unit, ECGColor::Purple, 5, 3, 6, CGEffectId::None, 0, 0.f, TEXT("Transform"),
 				TEXT("変貌: このターン中に味方の変貌が2回成功していれば、即座に「万物の頂点」に変貌"),
 				TEXT(""), TEXT(""), TEXT("P12T"), CGTransformConditionId::TransformsThisTurnCount, 2),
 			MakeCard(TEXT("P13"), TEXT("解放の詠唱"), ECGCardType::Spell, ECGColor::Purple, 5, 0, 0, CGEffectId::ForceTransformAllAllies, 0, 0.f, TEXT(""),
 				TEXT("変貌条件を無視して、変貌可能な味方Unitをすべて変貌させる")),
-			MakeCard(TEXT("P14"), TEXT("調和の賢者"), ECGCardType::Unit, ECGColor::Purple, 5, 5, 6, CGEffectId::OnPlayBuffAllyTargetAndUnitDiscount, 2, 0.f, TEXT(""),
-				TEXT("登場時、味方Unit1体を+2/+2し、次にプレイするUnit1体のコストを1軽減する(手札の特定カードを軽減する原設計をP11と同じ方針で簡略化)")),
-			MakeCard(TEXT("P15"), TEXT("不完全な神"), ECGCardType::Unit, ECGColor::Purple, 6, 6, 4, CGEffectId::None, 0, 0.f, TEXT("Transform"),
+			MakeCard(TEXT("P14"), TEXT("調和の賢者"), ECGCardType::Unit, ECGColor::Purple, 5, 5, 5, CGEffectId::OnPlayBuffAllyTargetAndUnitDiscount, 2, 0.f, TEXT("Guard"),
+				TEXT("庇護。登場時、味方Unit1体を+2/+2し、次にプレイするUnit1体のコストを1軽減する(手札の特定カードを軽減する原設計をP11と同じ方針で簡略化)")),
+			MakeCard(TEXT("P15"), TEXT("不完全な神"), ECGCardType::Unit, ECGColor::Purple, 6, 6, 3, CGEffectId::None, 0, 0.f, TEXT("Transform"),
 				TEXT("変貌: 自分のターン開始時、50%の確率で「真なる姿」に変貌"),
 				TEXT(""), TEXT(""), TEXT("P15T"), CGTransformConditionId::RandomChancePerTurn, 50),
 			// 紫の補強用に追加(16枚目、docs/next-ruleset-simulation-v1.md「第19回」)。
 			// 他の変貌元Unit(P01/P03/P06/P08/P09/P12/P15)が自力で条件を満たすまで
 			// 待つ必要があるのに対し、この1枚は「登場した瞬間に他の1体を変貌させる」
 			// ことで変貌のタイミングを前倒しできる、紫のテンポ不足を補う狙いのカード。
-			MakeCard(TEXT("P16"), TEXT("刻を歪める者"), ECGCardType::Unit, ECGColor::Purple, 2, 1, 2, CGEffectId::OnPlayForceTransformAllyTarget, 0, 0.f, TEXT(""),
+			MakeCard(TEXT("P16"), TEXT("刻を歪める者"), ECGCardType::Unit, ECGColor::Purple, 2, 1, 1, CGEffectId::OnPlayForceTransformAllyTarget, 0, 0.f, TEXT(""),
 				TEXT("登場時、変貌条件を無視して味方Unit1体を選んで変貌させる(対象がいなければ何も起きない)")),
 		};
 		return Cards;
@@ -287,18 +335,20 @@ namespace
 	const TArray<FCGCardDef>& BuildTransformTargetCards()
 	{
 		static const TArray<FCGCardDef> Cards = {
-			// 変貌先の全ステータスも+1/+1(第20回、docs/next-ruleset-simulation-v1.md参照)。
-			MakeCard(TEXT("P01T"), TEXT("若き賢者"), ECGCardType::Unit, ECGColor::Purple, 0, 3, 4, CGEffectId::None, 0, 0.f, TEXT(""),
+			// 紫のステータス全体ダウン(P05/P11/P14が庇護持ちの護衛になった分の底上げを
+			// 打ち消すため、第20回で乗せた+1/+1のうちHP側を巻き戻した。docs/next-ruleset-
+			// cards-v1.md「紫」)。P15Tだけは元々HP4と紙耐久な設計のため据え置き。
+			MakeCard(TEXT("P01T"), TEXT("若き賢者"), ECGCardType::Unit, ECGColor::Purple, 0, 3, 3, CGEffectId::None, 0, 0.f, TEXT(""),
 				TEXT("")),
-			MakeCard(TEXT("P03T"), TEXT("歴戦の使い魔"), ECGCardType::Unit, ECGColor::Purple, 0, 3, 5, CGEffectId::None, 0, 0.f, TEXT(""),
+			MakeCard(TEXT("P03T"), TEXT("歴戦の使い魔"), ECGCardType::Unit, ECGColor::Purple, 0, 3, 4, CGEffectId::None, 0, 0.f, TEXT(""),
 				TEXT("")),
-			MakeCard(TEXT("P06T"), TEXT("解放された魔物"), ECGCardType::Unit, ECGColor::Purple, 0, 5, 5, CGEffectId::OnPlayHealSelf, 1, 0.f, TEXT(""),
+			MakeCard(TEXT("P06T"), TEXT("解放された魔物"), ECGCardType::Unit, ECGColor::Purple, 0, 5, 4, CGEffectId::OnPlayHealSelf, 1, 0.f, TEXT(""),
 				TEXT("場に出た時に味方リーダーを1回復")),
-			MakeCard(TEXT("P08T"), TEXT("目覚めた怪物"), ECGCardType::Unit, ECGColor::Purple, 0, 6, 7, CGEffectId::None, 0, 0.f, TEXT(""),
+			MakeCard(TEXT("P08T"), TEXT("目覚めた怪物"), ECGCardType::Unit, ECGColor::Purple, 0, 6, 6, CGEffectId::None, 0, 0.f, TEXT(""),
 				TEXT("")),
-			MakeCard(TEXT("P09T"), TEXT("憤怒の権化"), ECGCardType::Unit, ECGColor::Purple, 0, 7, 7, CGEffectId::None, 0, 0.f, TEXT(""),
+			MakeCard(TEXT("P09T"), TEXT("憤怒の権化"), ECGCardType::Unit, ECGColor::Purple, 0, 7, 6, CGEffectId::None, 0, 0.f, TEXT(""),
 				TEXT("")),
-			MakeCard(TEXT("P12T"), TEXT("万物の頂点"), ECGCardType::Unit, ECGColor::Purple, 0, 8, 8, CGEffectId::None, 0, 0.f, TEXT("Guard"),
+			MakeCard(TEXT("P12T"), TEXT("万物の頂点"), ECGCardType::Unit, ECGColor::Purple, 0, 8, 7, CGEffectId::None, 0, 0.f, TEXT("Guard"),
 				TEXT("庇護")),
 			MakeCard(TEXT("P15T"), TEXT("真なる姿"), ECGCardType::Unit, ECGColor::Purple, 0, 11, 4, CGEffectId::OnPlayDamageFace, 2, 0.f, TEXT(""),
 				TEXT("登場時、敵リーダーへ2ダメージ")),
@@ -332,9 +382,12 @@ namespace
 				TEXT("フィニッシャー。味方Unitが10体死亡すると戦場に駆けつける。疾駆。"),
 				TEXT(""), TEXT("屍を越えてなお、彼だけは燃え続けている。")),
 			// 橙: マーケットから10枚購入すると駆けつける。登場時、マーケットの
-			// Unitを3枚コストを支払わずそのまま場に出す(O15独占商人と同じ仕組み)。
+			// Unitを3枚、プレイヤーが1枚ずつ選んでコストを支払わずそのまま場に出す
+			// (O15独占商人と同じ選択の仕組みを3回繰り返す。「プレイヤーがマーケット
+			// のカードを選択して無料でプレイできるカードを選びたい」という
+			// フィードバックへの対応。以前はプレイヤーに選ばせず自動で3枚出していた)。
 			MakeCard(TEXT("FIN_ORANGE"), TEXT("黄金の帝王"), ECGCardType::Unit, ECGColor::Orange, 10, 5, 5, CGEffectId::OnPlayFreeMarketCards, 3, 0.f, TEXT("Finisher"),
-				TEXT("フィニッシャー。マーケットから10枚購入すると戦場に駆けつける。登場時、マーケットのUnitを3枚コストを支払わず場に出す。"),
+				TEXT("フィニッシャー。マーケットから10枚購入すると戦場に駆けつける。登場時、マーケットのUnitを3枚、コストを支払わず選んで場に出す。"),
 				TEXT(""), TEXT("市場の全てが、彼一人のために動いていた。")),
 			// 青: カードを20枚ドローすると駆けつける。登場時、敵の場を全て追放する。
 			MakeCard(TEXT("FIN_BLUE"), TEXT("深淵の裁定者"), ECGCardType::Unit, ECGColor::Blue, 10, 6, 6, CGEffectId::OnPlayExileAllEnemyUnits, 0, 0.f, TEXT("Finisher"),
