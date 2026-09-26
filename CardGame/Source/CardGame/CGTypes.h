@@ -106,7 +106,7 @@ struct FCGCardDef
 	float Ratio = 0.f;
 
 	// カンマ区切りのキーワード群。"Haste"(速攻) / "Guard"(守護)に加え、次期ルールで
-	// "Seal"(封印) / "Transform"(変貌) / "Discount"(先物)を追加
+	// "Seal"(断罪) / "Transform"(変貌) / "Discount"(先物)を追加
 	// (docs/next-ruleset-design.md、docs/game-rules-minimum.md)。
 	UPROPERTY(BlueprintReadOnly, Category = "CardGame")
 	FString Tags;
@@ -147,30 +147,30 @@ struct FCGCardDef
 namespace CGTransformConditionId
 {
 	// 自分のターンをTransformConditionValue回、場にいたまま経過すると変貌
-	// (P01無垢の使い魔=3、P08静かなる怪物=3)。
+	// (P01末席の令嬢=3、P08仮面の廷臣=3)。
 	inline constexpr const TCHAR* TurnsInPlay = TEXT("TurnsInPlay");
 
 	// 攻撃を受けて生き残った回数がTransformConditionValueに達すると変貌
-	// (P03若き見習い=2)。
+	// (P03香り売りの侍従=2)。
 	inline constexpr const TCHAR* SurvivedAttacks = TEXT("SurvivedAttacks");
 
 	// 自分の手札がTransformConditionValue枚以下になった瞬間に変貌
-	// (P06封じられし魔物=4)。
+	// (P06秘めた野心の廷臣=4)。
 	inline constexpr const TCHAR* HandSizeAtMost = TEXT("HandSizeAtMost");
 
 	// このユニットが場に出てから、自分の味方Unitの死亡数がTransformConditionValueに
-	// 達すると変貌(P09眠れる怒り=3)。
+	// 達すると変貌(P09喪に服す貴族=3)。
 	inline constexpr const TCHAR* AlliesDiedSinceSummon = TEXT("AlliesDiedSinceSummon");
 
 	// 同じターン中に味方の変貌がTransformConditionValue回成功していれば、
-	// 即座に変貌(P12胎動する秘術=2)。
+	// 即座に変貌(P12王座を窺う者=2)。
 	inline constexpr const TCHAR* TransformsThisTurnCount = TEXT("TransformsThisTurnCount");
 
-	// 自分のターン開始時、TransformConditionValue%の確率で変貌(P15不完全な神=50)。
+	// 自分のターン開始時、TransformConditionValue%の確率で変貌(P15空位の座を望む者=50)。
 	inline constexpr const TCHAR* RandomChancePerTurn = TEXT("RandomChancePerTurn");
 
 	// 対象指定の味方強化(AllyUnitTarget)の対象に選ばれた回数がTransformConditionValueに
-	// 達すると変貌(P03若き見習い=2、docs/next-ruleset-cards-v1.md「カードの効果を
+	// 達すると変貌(P03香り売りの侍従=2、docs/next-ruleset-cards-v1.md「カードの効果を
 	// 書き直しました」対応)。ACGGameMode::ResolvePendingChoiceAllyTargetで進行度を+1する。
 	inline constexpr const TCHAR* BuffedCount = TEXT("BuffedCount");
 }
@@ -181,7 +181,7 @@ namespace CGTransformConditionId
 namespace CGCloneConditionId
 {
 	// 場の味方Unit数(自分自身を含む)がCloneConditionValue以上になった瞬間に分身
-	// (G01若木の番人=2、G06聖樹の守護者=2、G09巨石の壁役=3、G15万象の守り神=4)。
+	// (G01種を携える使徒=2、G06世界樹の巫女=2、G09行列を守る巨躯=3、G15世界樹に選ばれし者=4)。
 	inline constexpr const TCHAR* AllyUnitCountAtLeast = TEXT("AllyUnitCountAtLeast");
 
 	// このユニットが(防御側として)攻撃を受けて生き残ると分身(G03熊の盾持ち)。
@@ -352,7 +352,7 @@ enum class ECGChoiceType : uint8
 	MarketCard,        // マーケットから1枚選ぶ
 	BuyDestination,    // 購入したカードを手札に入れるか、山札の一番下に送るかを選ぶ
 
-	// 封印(青)、または対象指定の敵単体デバフ(B02/B04)の対象となる敵ユニットを
+	// 断罪(青)、または対象指定の敵単体デバフ(B02/B04)の対象となる敵ユニットを
 	// 1体選ぶ。EffectId(SealSpell/SealOnPlay vs OnPlayDebuffTarget)でどちらの
 	// 解決をするかを分岐する(ACGGameMode::ResolvePendingChoiceSealTarget)。
 	// EnemyOrFaceTargetと異なり顔面は選べない(必ずユニットが対象。
@@ -398,14 +398,21 @@ struct FCGPendingChoice
 	UPROPERTY(BlueprintReadOnly, Category = "CardGame")
 	int32 MaxCost = -1; // -1 = 無条件
 
-	// EnemyUnitTarget(封印)用: MaxCostを「コスト上限」ではなく「現在の攻撃力
-	// (パワー)上限」として解釈する(B11/B13、docs/next-ruleset-cards-v1.md「青」の
-	// 「パワー」表記への対応)。falseのとき(B01/B03/B06/B07/B09/B14)はこれまで通り
+	// EnemyUnitTarget(断罪)用: MaxCostを「コスト上限」ではなく「現在の攻撃力
+	// (パワー)上限」として解釈する(B01/B11/B13、docs/next-ruleset-cards-v1.md「青」の
+	// 「パワー」表記への対応)。falseのとき(B03/B06/B07/B09/B14)はこれまで通り
 	// カード定義のコストで判定する。現在の攻撃力はデバフ等で変動した後の実際の値
 	// (ACGPlayerState::BoardUnits[].Atk)をそのまま使うため、マイナスになっていても
 	// 追加のクランプ無しで正しく大小比較できる。
 	UPROPERTY(BlueprintReadOnly, Category = "CardGame")
 	bool bFilterByCurrentAtk = false;
+
+	// EnemyOrFaceTarget用: trueのとき顔面(-1)を選べず、必ず敵Unitを対象にしな
+	// ければならない(R05黒鉄の抜き打ち等、「敵Unit1体へ」という単体除去用の
+	// 固定対象カード)。falseのとき(R02先の先等)は従来通り顔面も選べる
+	// (docs/next-ruleset-cards-v1.md「赤」、ACGGameMode::ResolvePendingChoiceWithTarget参照)。
+	UPROPERTY(BlueprintReadOnly, Category = "CardGame")
+	bool bRequireUnitTarget = false;
 
 	UPROPERTY(BlueprintReadOnly, Category = "CardGame")
 	bool bRequireSpell = false; // trueならSpellのみが候補(墓地選択で使用)
@@ -435,7 +442,7 @@ struct FCGPendingChoice
 	int32 PendingBuffAmount = 0;
 
 	// MarketCard用: この選択を解決した後、続けて同じ種類の選択をあと何回
-	// 繰り返すか(黄金の帝王(FIN_ORANGE)のように、複数枚を1枚ずつ選ばせる効果で
+	// 繰り返すか(港を興す者(FIN_ORANGE)のように、複数枚を1枚ずつ選ばせる効果で
 	// 使う。docs/next-ruleset-cards-v1.md「橙」)。0なら繰り返さない。
 	UPROPERTY(BlueprintReadOnly, Category = "CardGame")
 	int32 RemainingRepeats = 0;
@@ -452,27 +459,33 @@ namespace CGEffectId
 	inline constexpr const TCHAR* None = TEXT("None");
 
 	// Unit登場時効果
-	inline constexpr const TCHAR* ScoutTop1 = TEXT("ScoutTop1");                                   // C001 先駆けの斥候
-	inline constexpr const TCHAR* GraveyardToDeckBottomDraw1 = TEXT("GraveyardToDeckBottomDraw1");  // C006 墓場あさり
-	inline constexpr const TCHAR* OnPlayDiscard1 = TEXT("OnPlayDiscard1");                          // C008 錆びた巨兵
-	inline constexpr const TCHAR* SecondPlayBuff = TEXT("SecondPlayBuff");                          // C009 街道の突撃兵
-	inline constexpr const TCHAR* OnPlayReturnGraveyardCheapCard = TEXT("OnPlayReturnGraveyardCheapCard"); // C011 再誕の司祭
-	inline constexpr const TCHAR* AllyBuffAtkThisTurn = TEXT("AllyBuffAtkThisTurn");                // C013 戦場の旗手
+	inline constexpr const TCHAR* ScoutTop1 = TEXT("ScoutTop1");                                   // C001 廃墟を渡る斥候
+	inline constexpr const TCHAR* GraveyardToDeckBottomDraw1 = TEXT("GraveyardToDeckBottomDraw1");  // C006 廃墟あさりの拾い屋
+	inline constexpr const TCHAR* OnPlayDiscard1 = TEXT("OnPlayDiscard1");                          // C008 錆びた黒鉄の巨兵
+	inline constexpr const TCHAR* SecondPlayBuff = TEXT("SecondPlayBuff");                          // C009 廃墟街道の突撃兵
+	inline constexpr const TCHAR* OnPlayReturnGraveyardCheapCard = TEXT("OnPlayReturnGraveyardCheapCard"); // C011 廃墟の蘇生司祭
+	inline constexpr const TCHAR* AllyBuffAtkThisTurn = TEXT("AllyBuffAtkThisTurn");                // C013 国無き旗手
 
 	// Unit常在効果(場にいる間ずっと有効。HasBoardUnitWithEffectで判定)
-	inline constexpr const TCHAR* OnDeathDraw = TEXT("OnDeathDraw");                                // C004 小さな研究者
-	inline constexpr const TCHAR* OnBuyEndTurnDiscardDraw = TEXT("OnBuyEndTurnDiscardDraw");        // C007 市場の仲買人
-	inline constexpr const TCHAR* OnAllySpellPing1 = TEXT("OnAllySpellPing1");                      // C010 追撃の射手
-	inline constexpr const TCHAR* BuyCostReductionThisTurn = TEXT("BuyCostReductionThisTurn");      // C012 市場監督官
-	inline constexpr const TCHAR* OnDeathReturnRandomGraveyardUnit = TEXT("OnDeathReturnRandomGraveyardUnit"); // C014 霊廟の守り手
-	inline constexpr const TCHAR* FirstSpellBonusDamage = TEXT("FirstSpellBonusDamage");            // C016 連鎖術の教授
+	inline constexpr const TCHAR* OnDeathDraw = TEXT("OnDeathDraw");                                // C004 結晶を覗いた子
+	inline constexpr const TCHAR* OnBuyEndTurnDiscardDraw = TEXT("OnBuyEndTurnDiscardDraw");        // C007 荒野の行商人
+	inline constexpr const TCHAR* OnAllySpellPing1 = TEXT("OnAllySpellPing1");                      // C010 結晶の谺を読む射手
+	inline constexpr const TCHAR* BuyCostReductionThisTurn = TEXT("BuyCostReductionThisTurn");      // C012 荒野の物々交換人
+	inline constexpr const TCHAR* OnDeathReturnRandomGraveyardUnit = TEXT("OnDeathReturnRandomGraveyardUnit"); // C014 廃墟の霊廟守り
+	inline constexpr const TCHAR* FirstSpellBonusDamage = TEXT("FirstSpellBonusDamage");            // C016 第六界を記す学者
 
 	// Spell効果
-	inline constexpr const TCHAR* OnPlayDamageTarget = TEXT("OnPlayDamageTarget");                  // C017 火花の一撃
-	inline constexpr const TCHAR* OnPlayHealSelf = TEXT("OnPlayHealSelf");                          // C018 応急手当
-	inline constexpr const TCHAR* Discard1Draw2 = TEXT("Discard1Draw2");                            // C019 手札の選別
-	// EffectValue体の「見習い兵」トークンを場に出す(EffectValueを読むよう
-	// 汎用化済み。C020見習い召集=2、G02癒しの若葉=2)。
+	inline constexpr const TCHAR* OnPlayDamageTarget = TEXT("OnPlayDamageTarget");                  // C017 結晶の欠片/R02 先の先(敵Unitまたは敵リーダーへ)
+
+	// R05黒鉄の抜き打ち専用: OnPlayDamageTargetと同じ対象指定ダメージだが、
+	// 顔面を選べず必ず敵Unitを対象にする(FCGPendingChoice::bRequireUnitTarget)。
+	// 以前はOnPlayDamageTargetを共用していたため、「敵Unit1体へ」という
+	// カード説明にもかかわらず顔面も選べてしまうバグになっていた。
+	inline constexpr const TCHAR* OnPlayDamageUnitTarget = TEXT("OnPlayDamageUnitTarget");
+	inline constexpr const TCHAR* OnPlayHealSelf = TEXT("OnPlayHealSelf");                          // C018 冷たい結晶への祈り
+	inline constexpr const TCHAR* Discard1Draw2 = TEXT("Discard1Draw2");                            // C019 荒野の取捨選択
+	// EffectValue体の「名もなき随行者」トークンを場に出す(EffectValueを読むよう
+	// 汎用化済み。C020彷徨う者たちの合流=2、G02列に加わった旅人=2)。
 	inline constexpr const TCHAR* SummonApprenticeTokens = TEXT("SummonApprenticeTokens");
 
 	// 自分の場のUnit数だけダメージを、選んだ敵Unit1体に与える(G11(新)群れの猛攻。
@@ -480,18 +493,24 @@ namespace CGEffectId
 	// 差し替えとして追加。EnemyUnitTarget、顔面は選べない)。
 	inline constexpr const TCHAR* OnPlayDamageTargetByAllyUnitCount = TEXT("OnPlayDamageTargetByAllyUnitCount");
 
-	inline constexpr const TCHAR* ReturnGraveyardSpellSelfDamage1 = TEXT("ReturnGraveyardSpellSelfDamage1"); // C021 墓地再点火
-	inline constexpr const TCHAR* BuyFromMarketCostUnder3ToHand = TEXT("BuyFromMarketCostUnder3ToHand");     // C022 市場調達
-	inline constexpr const TCHAR* RandomEnemyDamage1x4 = TEXT("RandomEnemyDamage1x4");              // C023 連弾の雨
-	inline constexpr const TCHAR* ConditionalDamage3or2 = TEXT("ConditionalDamage3or2");            // C024 逆転の号令
+	inline constexpr const TCHAR* ReturnGraveyardSpellSelfDamage1 = TEXT("ReturnGraveyardSpellSelfDamage1"); // C021 結晶に灯る記憶
+	inline constexpr const TCHAR* BuyFromMarketCostUnder3ToHand = TEXT("BuyFromMarketCostUnder3ToHand");     // C022 廃墟に転がる戦利品
+	inline constexpr const TCHAR* RandomEnemyDamage1x4 = TEXT("RandomEnemyDamage1x4");              // C023 結晶が弾く雨
+	inline constexpr const TCHAR* ConditionalDamage3or2 = TEXT("ConditionalDamage3or2");            // C024 土壇場の号令
 
 	// カード効果ではなく、通常攻撃のターゲット選択を再開するための内部マーカー
 	// (FCGPendingChoice::EffectId用。docs/architecture.md「選択待ち(PendingChoice)の仕組み」参照)。
 	inline constexpr const TCHAR* AttackTarget = TEXT("__AttackTarget");
 
-	// 封印(青、次期ルール、docs/game-rules-minimum.md)。EffectValueをコスト上限
+	// 生け贄(Sacrifice)キーワードを持つUnitをプレイする際、生け贄にする味方Unitを
+	// プレイヤー(またはAI)に選ばせるための内部マーカー(AttackTargetと同じ位置づけ)。
+	// Choice.RevealedCardIdに、選択解決後に実際に場へ出すカードのCardIdを控えておく
+	// (docs/keywords.md「生け贄(Sacrifice)」、ACGGameMode::ResolvePendingChoiceAllyTarget参照)。
+	inline constexpr const TCHAR* SacrificeAllyOnPlay = TEXT("__SacrificeAllyOnPlay");
+
+	// 断罪(青、次期ルール、docs/game-rules-minimum.md)。EffectValueをコスト上限
 	// フィルタとして使う(-1なら無条件)。Spell版とUnit登場時版で分けている。
-	inline constexpr const TCHAR* SealSpell = TEXT("SealSpell");                   // B01/B03/B06 相当
+	inline constexpr const TCHAR* SealSpell = TEXT("SealSpell");                   // B03/B06 相当
 	inline constexpr const TCHAR* SealOnPlay = TEXT("SealOnPlay");                 // B07 相当(コスト上限で判定)
 
 	// B11/B13: 対象の絞り込みをコストではなく「現在の攻撃力(パワー)」で行う版
@@ -499,6 +518,11 @@ namespace CGEffectId
 	// 攻撃力の上限フィルタとして使う。バフ/デバフ後の実際の値で判定するため、
 	// マイナスになっていても正しく比較できる(FCGPendingChoice::bFilterByCurrentAtk参照)。
 	inline constexpr const TCHAR* SealOnPlayByPower = TEXT("SealOnPlayByPower");   // B11/B13 相当
+
+	// B01: SealSpellのSpell版だが、コストではなく現在の攻撃力(パワー)で判定する
+	// (docs/next-ruleset-cards-v1.md「青」B01「パワー1以下」表記に合わせて実装)。
+	// SealOnPlayByPowerのSpell版に相当。
+	inline constexpr const TCHAR* SealSpellByPower = TEXT("SealSpellByPower");     // B01 相当
 
 	// 先物(橙)キーワードそのものが持つ「登場時、次の購入のコストを1軽減」効果は、
 	// 専用のEffectIdではなくFCGCardDef::HasTag("Discount")から直接
@@ -537,7 +561,7 @@ namespace CGEffectId
 	// でEffectIdを見て分岐する)。
 	inline constexpr const TCHAR* BuffAllyTargetAndDraw = TEXT("BuffAllyTargetAndDraw");
 	// P14: 登場時の味方強化に加えて、次にプレイするUnit1体のコストを1軽減する
-	// (P11予見の魔導師と同じ簡略化方針、NextUnitPlayDiscountを流用)。
+	// (P11取り次ぎの女官と同じ簡略化方針、NextUnitPlayDiscountを流用)。
 	inline constexpr const TCHAR* OnPlayBuffAllyTargetAndUnitDiscount = TEXT("OnPlayBuffAllyTargetAndUnitDiscount");
 	// P16: 登場時、変貌条件を無視して味方Unit1体を選んで強制的に変貌させる
 	// (ForceTransformAllAlliesの単体対象指定版)。
@@ -556,12 +580,28 @@ namespace CGEffectId
 	// 何も起きない。R01相当。バニラのステータス効率が高すぎたため、ステータスを
 	// 下げる代わりに持たせた。docs/next-ruleset-cards-v1.md「赤」参照)。
 	inline constexpr const TCHAR* OnDeathDamageRandomEnemyUnit1 = TEXT("OnDeathDamageRandomEnemyUnit1");
+
+	// 自分自身の死亡時、コインをEffectValue増加する(R03/R04/R07/R13相当)。
+	// 「死亡時に発生する効果を赤に増やしてほしい(例: 死亡時にコイン+1)」という
+	// フィードバックへの対応。赤の弱めのカードに死亡時の見返りを持たせることで、
+	// 疾駆で先に攻め込んで倒れても損切りしにくくする狙い(docs/next-ruleset-
+	// cards-v1.md「赤」参照)。
+	inline constexpr const TCHAR* OnDeathGrantPurchaseMana = TEXT("OnDeathGrantPurchaseMana");
 	// 自分の他のUnitが死亡するたび(このユニット自身は場に残っている前提)敵リーダーへ
 	// EffectValueダメージ(R12相当)。OnDeathDamageFace1と違い「死んだユニットの
 	// ハンドラ」ではなく「生き残ったユニットのアウラ」として判定する
 	// (ACGPlayerState::RemoveDeadUnitsAndGetDeathDrawCount内、AlliesDiedSinceSummon
 	// と同じ生存者走査ループで扱う)。
 	inline constexpr const TCHAR* OnAllyDeathDamageFace1 = TEXT("OnAllyDeathDamageFace1");
+
+	// 常在アウラ: 自分か相手か問わず、場のUnitが1体死亡するたびに敵リーダーへ
+	// EffectValueダメージ(OnAllyDeathDamageFace1(R12)と異なり自分の味方に限らない、
+	// 戦場全体を対象とする版)。OnAllyDeathDamageFace1と同じくEffectIdテーブルには
+	// 登録せず、ACGPlayerState::RemoveDeadUnitsAndGetDeathDrawCount内で
+	// HasBoardUnitWithEffectにより直接判定する(このユニット自身が死んだ場合は
+	// 既に場から除かれているため発動しない)。
+	inline constexpr const TCHAR* OnAnyUnitDeathDamageFace1 = TEXT("OnAnyUnitDeathDamageFace1");
+
 	inline constexpr const TCHAR* RandomEnemyDamage2x3 = TEXT("RandomEnemyDamage2x3");   // R11相当
 	inline constexpr const TCHAR* DamageFaceByUnitCount = TEXT("DamageFaceByUnitCount"); // R14相当
 
@@ -573,23 +613,23 @@ namespace CGEffectId
 	// ECGChoiceType::EnemyUnitTargetを使う点だけが異なる)。
 	inline constexpr const TCHAR* OnPlayDebuffTarget = TEXT("OnPlayDebuffTarget"); // B02相当
 
-	// B04: 自分が封印を成功させるたびに敵リーダーへ1ダメージ(常在アウラ、
+	// B04: 自分が断罪を成功させるたびに敵リーダーへ1ダメージ(常在アウラ、
 	// EffectIdテーブルには登録せずHasBoardUnitWithEffectで直接判定する)。
-	// ACGPlayerState::NotifySealSucceededから、封印が成立した全ての箇所
-	// (ACGGameMode::ResolvePendingChoiceSealTarget、B14のターン開始時封印)で呼ぶ。
+	// ACGPlayerState::NotifySealSucceededから、断罪が成立した全ての箇所
+	// (ACGGameMode::ResolvePendingChoiceSealTarget、B14のターン開始時断罪)で呼ぶ。
 	inline constexpr const TCHAR* OnSealDamageFace1 = TEXT("OnSealDamageFace1");
 
-	// 常在アウラ: このユニットが場にいる間、自分が封印を成立させるたびに1ドロー
-	// (B08 霧の壁。ドキュメントに設計だけあり未実装だった効果。docs/next-ruleset-
+	// 常在アウラ: このユニットが場にいる間、自分が断罪を成立させるたびに1ドロー
+	// (B08 万年七年生。ドキュメントに設計だけあり未実装だった効果。docs/next-ruleset-
 	// cards-v1.md「青」参照)。OnSealDamageFace1と同じくEffectIdテーブルには
 	// 登録せず、ACGPlayerState::NotifySealSucceededから直接判定する。
 	inline constexpr const TCHAR* OnSealDraw1 = TEXT("OnSealDraw1");
 
-	// B09: 敵Unit1体を封印し、コインを1増加する(Spell版封印の亜種。
+	// B09: 敵Unit1体を断罪し、コインを1増加する(Spell版断罪の亜種。
 	// EffectValue=コスト上限、-1で無条件)。
 	inline constexpr const TCHAR* SealSpellGrantPurchaseMana = TEXT("SealSpellGrantPurchaseMana");
 
-	// B15: 封印(Spell)を2回連続で行う。1体目の封印成功後、
+	// B15: 断罪(Spell)を2回連続で行う。1体目の断罪成功後、
 	// ACGGameMode::ResolvePendingChoiceSealTargetが自動で2体目の選択を開始する。
 	inline constexpr const TCHAR* SealSpellTwo = TEXT("SealSpellTwo");
 
@@ -597,7 +637,14 @@ namespace CGEffectId
 	// Atk/Hpデバフを行う常在効果(B10相当)。
 	inline constexpr const TCHAR* EndTurnDebuffHighestCostEnemy = TEXT("EndTurnDebuffHighestCostEnemy");
 
-	// 自分のターン開始時、敵Unitの中で最もコストが高いものを封印する常在効果
+	// B06「深淵の封印」: このユニットが場にいる限り、敵Unitの能力(登場時/死亡時/
+	// 常在アウラ等の発動)はすべて発動しない、という常在アウラ。EffectIdテーブルには
+	// 登録せず、ACGPlayerState::AreUnitAbilitiesSuppressedByEnemyで各効果の発動箇所が
+	// 個別にHasBoardUnitWithEffect経由で判定する(docs/next-ruleset-cards-v1.md
+	// 「青」参照)。
+	inline constexpr const TCHAR* SuppressEnemyUnitAbilities = TEXT("SuppressEnemyUnitAbilities");
+
+	// 自分のターン開始時、敵Unitの中で最もコストが高いものを断罪する常在効果
 	// (B14相当。青パッシブの対象にもなる)。
 	inline constexpr const TCHAR* OnTurnStartSealHighestCostEnemy = TEXT("OnTurnStartSealHighestCostEnemy");
 
@@ -615,13 +662,24 @@ namespace CGEffectId
 	// 防御側ユニットのDefを直接見て判定する)。
 	inline constexpr const TCHAR* OnDefendHealSelf1 = TEXT("OnDefendHealSelf1");
 
-	// 緑: 見習い兵よりHPが高い1/2トークンをEffectValue体出す(G05相当。
+	// 緑: 名もなき随行者よりHPが高い1/2トークンをEffectValue体出す(G05相当。
 	// SummonApprenticeTokensの1/1版と別トークンを使う)。
 	inline constexpr const TCHAR* SummonToughApprenticeTokens = TEXT("SummonToughApprenticeTokens");
 
+	// 赤: 死亡時に敵リーダーへ1ダメージを与える0/1トークン(TK_EMBER 赤熱の残り火)を
+	// EffectValue体出す(R08相当)。
+	inline constexpr const TCHAR* SummonEmberTokens = TEXT("SummonEmberTokens");
+
 	// 橙の購入トリガー系(次期ルール、フェーズ4b)。EffectValueは効果量として使う。
+	// HP側(旧OnBuyBuffSelfHp、O14専用)は「増強(Reinforce)」キーワードへ一般化した
+	// ため廃止(docs/keywords.md「増強(Reinforce)」、ACGPlayerState::BuyCard参照)。
 	inline constexpr const TCHAR* OnBuyBuffSelfAtk = TEXT("OnBuyBuffSelfAtk");                       // O05相当(常在)
-	inline constexpr const TCHAR* OnBuyBuffSelfHp = TEXT("OnBuyBuffSelfHp");                         // O14相当(常在)
+
+	// O16強奪の商人(常在): 自分が購入するたびに、敵のランダムなUnit1体へ
+	// EffectValue分のダメージを与える。ACGGameMode::RequestBuyCard側で、
+	// BuyCard()成立後にOpponentへ適用する(BuyCard()自体はOpponentを持たない
+	// ACGPlayerStateのメンバ関数のため。docs/next-ruleset-cards-v1.md「橙」)。
+	inline constexpr const TCHAR* OnBuyDamageRandomEnemyUnit = TEXT("OnBuyDamageRandomEnemyUnit");    // O16相当(常在)
 	inline constexpr const TCHAR* OnBuyEndTurnGrantPurchaseMana = TEXT("OnBuyEndTurnGrantPurchaseMana"); // O12相当(常在、ターン終了時判定)
 	// O10: このターン中、購入するたびに場のUnit全てが+1/+0される(Spell)。
 	inline constexpr const TCHAR* GrantBoardBuffOnPurchaseThisTurn = TEXT("GrantBoardBuffOnPurchaseThisTurn");

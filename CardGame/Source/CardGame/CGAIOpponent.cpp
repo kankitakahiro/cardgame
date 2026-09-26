@@ -8,7 +8,7 @@ namespace
 {
 	// 対象を必要とする効果が、対象となるユニットが1体も無いために不発になるか
 	// どうかを判定する。RunTurn()のプレイ選択で、こうした「出しても何も起きない」
-	// カードを除外するのに使う(封印/対象指定バフ等を持つカードが対象不在で
+	// カードを除外するのに使う(断罪/対象指定バフ等を持つカードが対象不在で
 	// 空撃ちされ、外からは「何もして来ない」ように見えてしまう不具合への対策)。
 	// 厳密な候補判定(コスト上限フィルタ等)はACGGameMode側の各Resolve関数が
 	// 別途行うため、ここでは「そもそも対象になり得るUnitが存在するか」だけを見る。
@@ -16,14 +16,129 @@ namespace
 	{
 		if (Def.EffectId == FName(CGEffectId::SealSpell) || Def.EffectId == FName(CGEffectId::SealOnPlay)
 			|| Def.EffectId == FName(CGEffectId::SealSpellGrantPurchaseMana) || Def.EffectId == FName(CGEffectId::SealSpellTwo)
-			|| Def.EffectId == FName(CGEffectId::OnPlayDebuffTarget))
+			|| Def.EffectId == FName(CGEffectId::OnPlayDebuffTarget) || Def.EffectId == FName(CGEffectId::MassDebuffEnemies)
+			|| Def.EffectId == FName(CGEffectId::OnPlayDamageUnitTarget))
 		{
 			return !Opponent || Opponent->BoardUnits.Num() == 0;
 		}
 		if (Def.EffectId == FName(CGEffectId::BuffAllyTarget) || Def.EffectId == FName(CGEffectId::OnPlayBuffAllyTarget)
-			|| Def.EffectId == FName(CGEffectId::BuffAllyTargetAndDraw) || Def.EffectId == FName(CGEffectId::OnPlayBuffAllyTargetAndUnitDiscount))
+			|| Def.EffectId == FName(CGEffectId::BuffAllyTargetAndDraw) || Def.EffectId == FName(CGEffectId::OnPlayBuffAllyTargetAndUnitDiscount)
+			|| Def.EffectId == FName(CGEffectId::BuffAllAlliesFlat) || Def.EffectId == FName(CGEffectId::BuffAllAlliesAtkOnly)
+			|| Def.EffectId == FName(CGEffectId::GrantBoardBuffOnPurchaseThisTurn))
 		{
 			return !Self || Self->BoardUnits.Num() == 0;
+		}
+		// 生け贄(Sacrifice、R15黒鉄を継ぐ大剣士): 道連れにする自分のUnitが1体も
+		// いなければそもそもプレイできない(ACGPlayerState::PlayCardFromHand側の
+		// legality checkと同じ条件。ここで弾いておかないと、RunTurn()のプレイ
+		// ループがRequestPlayCard失敗でそのターンの残りの候補評価ごと止まって
+		// しまう)。
+		if (Def.HasTag(TEXT("Sacrifice")))
+		{
+			return !Self || Self->BoardUnits.Num() == 0;
+		}
+		return false;
+	}
+
+	// カードをこのタイミングでプレイする「今出す価値」をスコア化する。単純な
+	// コスト降順(旧実装)だと、同ターン中に他のUnitを出してから使うべきカード
+	// (R09連携の立会人等)や、味方が並んでから撃つべき全体バフが、たまたま
+	// コストの都合が合わない限り腐ってしまう。「自分に得なカードの効果が
+	// できるだけ発動し、勝利に近づくような行動をしてほしい」というフィード
+	// バックへの対応として、カード同士の噛み合わせ(シナジー)と盤面状況を
+	// 加味したスコアに基づいて選ぶようにする。
+	int32 ScorePlayCandidate(const FCGCardDef& Def, const ACGPlayerState* Self, const ACGPlayerState* Opponent)
+	{
+		// ベースはコスト(高コスト=マナを無駄にしない)。Unitは場に残って攻撃・
+		// キーワード発動源になるため、Spellより基本的に優先する(対象指定Spell
+		// ばかり出て場が育たない問題への既存の対策を踏襲)。
+		int32 Score = Def.Cost * 10;
+		if (Def.CardType == ECGCardType::Unit)
+		{
+			Score += 1000;
+		}
+
+		const int32 SelfAllyCount = Self ? Self->BoardUnits.Num() : 0;
+		const int32 EnemyCount = Opponent ? Opponent->BoardUnits.Num() : 0;
+
+		// R09連携の立会人/C009廃墟街道の突撃兵(SecondPlayBuff): このターン
+		// 他のカードを1枚もプレイしていなければ+2/+0が発動しないため後回しにし、
+		// 既に1枚以上プレイ済みなら発動を確実にするため優先度を上げる
+		// (発動条件はACGPlayerState::PlayCardFromHand「CardsPlayedThisTurn>=1」と一致させる)。
+		if (Def.EffectId == FName(CGEffectId::SecondPlayBuff))
+		{
+			Score += (Self && Self->CardsPlayedThisTurn > 0) ? 500 : -1500;
+		}
+
+		// 場全体バフ(G08祈りの輪/G14世界樹の加護等)は対象が多いほど得なので、
+		// 味方Unit数に応じてボーナスを乗せる(1体もいない/1体だけでは損なので
+		// 減点し、場が育つまで後回しにする。WouldCardEffectBeUselessは「0体なら
+		// 不発」しか見ていないため、ここで段階的な価値を評価する)。
+		if (Def.EffectId == FName(CGEffectId::BuffAllAlliesFlat) || Def.EffectId == FName(CGEffectId::BuffAllAlliesAtkOnly)
+			|| Def.EffectId == FName(CGEffectId::GrantBoardBuffOnPurchaseThisTurn))
+		{
+			Score += SelfAllyCount * 300 - 400;
+		}
+
+		// 対象指定の味方強化(P02/P04/P07/P10/P05等): 味方が既にいるほど「伸ばす」
+		// 選択肢が増える(ChooseAllyBuffTargetが一番育ったユニットを選ぶため、
+		// 場に複数いる方が強化が無駄になりにくい)。
+		if (Def.EffectId == FName(CGEffectId::BuffAllyTarget) || Def.EffectId == FName(CGEffectId::OnPlayBuffAllyTarget)
+			|| Def.EffectId == FName(CGEffectId::BuffAllyTargetAndDraw) || Def.EffectId == FName(CGEffectId::OnPlayBuffAllyTargetAndUnitDiscount))
+		{
+			Score += FMath::Min(SelfAllyCount, 3) * 150;
+		}
+
+		// 断罪/対象指定デバフ(B02等)・全体デバフ(B12禁書一斉開帳): 敵の場が
+		// 育っているほど脅威除去の価値が高いため、敵Unit数に応じてボーナスを
+		// 乗せる(逆に敵が1体も育っていないうちに使うのは弱い相手を封じるだけで
+		// 損なので、既存の「対象0体なら不発」判定より一歩踏み込んで評価する)。
+		if (Def.HasTag(TEXT("Seal")) || Def.EffectId == FName(CGEffectId::OnPlayDebuffTarget)
+			|| Def.EffectId == FName(CGEffectId::MassDebuffEnemies))
+		{
+			Score += FMath::Min(EnemyCount, 3) * 150;
+		}
+
+		// 分身(Clone)持ちUnit: 味方Unitが多いほど発動条件(味方N体以上等)を
+		// 満たしやすいため、場が育っているときに優先度を上げる。
+		if (!Def.CloneConditionId.IsNone())
+		{
+			Score += FMath::Min(SelfAllyCount, 3) * 100;
+		}
+
+		// 先物(Discount)持ちUnit: 経済を早めに育てておくほど後続のプレイ/購入が
+		// 楽になるため、わずかに優先する。
+		if (Def.HasTag(TEXT("Discount")))
+		{
+			Score += 50;
+		}
+
+		return Score;
+	}
+
+	// 今の(CurrentMana+PurchaseMana、割引込み)で買えるマーケットカードが1枚でも
+	// あるか。「空撃ちするくらいならマーケットから購入してほしい」というフィード
+	// バックへの対応で、シナジーの無い弱いスペルを温存して購入に回すかどうかの
+	// 判定に使う(RunTurn参照)。
+	bool HasAffordableMarketCard(const ACGGameState& CGState, const ACGPlayerState& Self)
+	{
+		const int32 Budget = Self.CurrentMana + Self.PurchaseMana;
+		for (const FCGMarketSlot& Slot : CGState.MarketSlots)
+		{
+			if (Slot.CardId.IsNone())
+			{
+				continue;
+			}
+			FCGCardDef Def;
+			if (!UCGCardDatabase::FindCard(Slot.CardId, Def))
+			{
+				continue;
+			}
+			const int32 EffectiveCost = FMath::Max(0, Def.Cost - Self.ComputeCurrentPurchaseDiscount());
+			if (EffectiveCost <= Budget)
+			{
+				return true;
+			}
 		}
 		return false;
 	}
@@ -51,6 +166,14 @@ int32 UCGAIOpponent::ChooseAttackTarget(const ACGPlayerState& Attacker, const AC
 	{
 		return -1;
 	}
+
+	// 赤は相手を削りきることを最大の目標にする(盤面のUnitを無視して常に顔面を
+	// 狙う)。顔面攻撃は反撃を受けないため、純粋なレースとして常に合理的でもある。
+	if (Attacker.ActiveColors.Contains(ECGColor::Red))
+	{
+		return -1;
+	}
+
 	// 緑パッシブ等、盤面状況で変動する継続的なボーナスを含む実効値で判断する
 	// (ACGPlayerState::GetEffectiveAtk参照)。
 	const int32 MyAtk = Attacker.GetEffectiveAtk(AttackerUnitIndex);
@@ -79,8 +202,16 @@ int32 UCGAIOpponent::ChooseAttackTarget(const ACGPlayerState& Attacker, const AC
 	return BestIndex; // 見つからなければ顔面(-1)。
 }
 
-int32 UCGAIOpponent::ChooseDamageTarget(const ACGPlayerState& Opponent, int32 Damage)
+int32 UCGAIOpponent::ChooseDamageTarget(const ACGPlayerState& Self, const ACGPlayerState& Opponent, int32 Damage, bool bRequireUnitTarget)
 {
+	// 赤は相手を削りきることを最大の目標にする(常に顔面を狙う。ChooseAttackTarget
+	// 参照)。ただしbRequireUnitTarget(R05黒鉄の抜き打ち等)のときは顔面を選べない
+	// ため、この近道は使わず必ず敵Unitを選ぶ。
+	if (!bRequireUnitTarget && Self.ActiveColors.Contains(ECGColor::Red))
+	{
+		return -1;
+	}
+
 	int32 BestIndex = -1;
 	int32 BestHp = TNumericLimits<int32>::Max();
 	for (int32 i = 0; i < Opponent.BoardUnits.Num(); ++i)
@@ -92,7 +223,20 @@ int32 UCGAIOpponent::ChooseDamageTarget(const ACGPlayerState& Opponent, int32 Da
 			BestIndex = i;
 		}
 	}
-	return BestIndex; // 見つからなければ顔面(-1)。
+	if (BestIndex == -1 && bRequireUnitTarget)
+	{
+		// 打点で倒せる相手がいなくても、顔面は選べないため一番HPが低い
+		// (倒すのに一番近い)ユニットを選ぶ。
+		for (int32 i = 0; i < Opponent.BoardUnits.Num(); ++i)
+		{
+			if (Opponent.BoardUnits[i].Hp < BestHp)
+			{
+				BestHp = Opponent.BoardUnits[i].Hp;
+				BestIndex = i;
+			}
+		}
+	}
+	return BestIndex; // bRequireUnitTargetがfalseで見つからなければ顔面(-1)。
 }
 
 bool UCGAIOpponent::ChooseKeepOnTop(const ACGPlayerState& Self, FName RevealedCardId)
@@ -191,6 +335,24 @@ int32 UCGAIOpponent::ChooseAllyBuffTarget(const ACGPlayerState& Self)
 	return BestIndex;
 }
 
+int32 UCGAIOpponent::ChooseAllySacrificeTarget(const ACGPlayerState& Self)
+{
+	int32 BestIndex = -1;
+	int32 BestHp = TNumericLimits<int32>::Max();
+	int32 BestAtk = TNumericLimits<int32>::Max();
+	for (int32 i = 0; i < Self.BoardUnits.Num(); ++i)
+	{
+		const FCGBoardUnit& Unit = Self.BoardUnits[i];
+		if (Unit.Hp < BestHp || (Unit.Hp == BestHp && Unit.Atk < BestAtk))
+		{
+			BestHp = Unit.Hp;
+			BestAtk = Unit.Atk;
+			BestIndex = i;
+		}
+	}
+	return BestIndex;
+}
+
 int32 UCGAIOpponent::ChooseAllyTransformTarget(const ACGPlayerState& Self)
 {
 	int32 BestIndex = -1;
@@ -245,7 +407,7 @@ FName UCGAIOpponent::ChooseMarketCard(const TArray<FName>& MarketCardIds, const 
 		{
 			continue;
 		}
-		// O15独占商人: 場に直接出すため、候補はUnitのみに絞る
+		// O15黒鉄の買い占め屋: 場に直接出すため、候補はUnitのみに絞る
 		// (docs/next-ruleset-cards-v1.md「橙」)。
 		if (Choice.EffectId == FName(CGEffectId::OnPlayDeployFromMarketFree) && Def.CardType != ECGCardType::Unit)
 		{
@@ -310,17 +472,19 @@ void UCGAIOpponent::RunTurn(ACGGameMode* GameMode, int32 SideIndex)
 	// 切ってしまい、AIが一切カードをプレイ/攻撃しなくなる不具合があったため
 	// 順序を入れ替えた)。
 	// 選び方は次の2点を優先する:
-	// ①Unitを優先(単にコストが高いものから出すだけだと、対象を必要とする
-	//   Spell(封印/対象指定バフ等)ばかり出て場が育たず、外からは「何もして
-	//   来ない」ように見えてしまう不具合があったため)
-	// ②対象を必要とする効果で、対象が1体も存在しない(=何も起きない)カードは
-	//   除外する(封印/対象指定デバフは敵の場が、対象指定の味方強化は自分の場が
+	// ①対象を必要とする効果で、対象が1体も存在しない(=何も起きない)カードは
+	//   除外する(断罪/対象指定デバフは敵の場が、対象指定の味方強化は自分の場が
 	//   空だと不発になる)
+	// ②残った候補は`ScorePlayCandidate`のスコアが一番高いものを選ぶ(コスト・
+	//   Unit優先に加えて、カード同士のシナジーや盤面状況を加味する。「自分に
+	//   得なカードの効果ができるだけ発動し、勝利に近づくような行動をして
+	//   ほしい」というフィードバックへの対応)。スコアはSelf->CardsPlayedThisTurn/
+	//   BoardUnits.Num()を毎回参照するため、1枚プレイするたびに次の候補評価へ
+	//   自動的に反映される。
 	for (int32 SafetyCounter = 0; SafetyCounter < 30 && CGState->WinnerPlayerIndex == -1; ++SafetyCounter)
 	{
 		FName BestCardId = NAME_None;
-		int32 BestCost = -1;
-		bool bBestIsUnit = false;
+		int32 BestScore = MIN_int32;
 		for (const FName& HandCardId : Self->HandCardIds)
 		{
 			FCGCardDef Def;
@@ -332,17 +496,30 @@ void UCGAIOpponent::RunTurn(ACGGameMode* GameMode, int32 SideIndex)
 			{
 				continue;
 			}
-			const bool bIsUnit = (Def.CardType == ECGCardType::Unit);
-			const bool bBetter = (BestCardId == NAME_None)
-				|| (bIsUnit != bBestIsUnit ? bIsUnit : Def.Cost > BestCost);
-			if (bBetter)
+			const int32 Score = ScorePlayCandidate(Def, Self, Opponent);
+			if (BestCardId == NAME_None || Score > BestScore)
 			{
-				BestCost = Def.Cost;
+				BestScore = Score;
 				BestCardId = HandCardId;
-				bBestIsUnit = bIsUnit;
 			}
 		}
-		if (BestCardId == NAME_None || !GameMode->RequestPlayCard(SideIndex, BestCardId))
+		if (BestCardId == NAME_None)
+		{
+			break;
+		}
+
+		// 「シナジーの無い単発スペル(スコアが素点+わずかなボーナスしか無い)を
+		// 空撃ちするくらいなら、そのマナ/コインをマーケット購入に回してほしい」
+		// というフィードバックへの対応。Unitは常に+1000のボーナスが乗るため
+		// この足切りには掛からない(盤面を残すプレイは引き続き優先する)。
+		FCGCardDef BestDef;
+		if (UCGCardDatabase::FindCard(BestCardId, BestDef) && BestDef.CardType == ECGCardType::Spell
+			&& BestScore <= BestDef.Cost * 10 + 100 && HasAffordableMarketCard(*CGState, *Self))
+		{
+			break;
+		}
+
+		if (!GameMode->RequestPlayCard(SideIndex, BestCardId))
 		{
 			break;
 		}

@@ -343,7 +343,7 @@ void UCGCardSlotWidget::SetCardData(const FCGCardDef& Def, TOptional<int32> Over
 	}
 	if (Def.HasTag(TEXT("Seal")))
 	{
-		TribeLineParts.Add(TEXT("●封印"));
+		TribeLineParts.Add(TEXT("●断罪"));
 	}
 	if (Def.HasTag(TEXT("Transform")))
 	{

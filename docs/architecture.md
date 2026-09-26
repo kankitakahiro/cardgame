@@ -13,11 +13,12 @@ Unreal Engine 5.8上のカードゲーム実装(`CardGame/Source/CardGame/`)の�
 | 観点 | ドキュメント |
 |---|---|
 | ゲームのルール | [game-rules-minimum.md](game-rules-minimum.md)(現行実装の仕様一式) |
-| カードの効果 | [next-ruleset-cards-v1.md](next-ruleset-cards-v1.md)(5色76種+無色24種の全カードリスト) |
+| カードの効果 | [next-ruleset-cards-v1.md](next-ruleset-cards-v1.md)(5色78種+無色24種の全カードリスト) |
 | ゲームの世界観 | [カードゲーム 世界観・フレーバー設定.md](<カードゲーム 世界観・フレーバー設定.md>)(舞台設定・色ごとの国・カードのフレーバーテキスト例) |
 | ゲームの演出 | [presentation.md](presentation.md)(攻撃/カードプレイ/勝敗の演出、行動ログ等のHUDフィードバック) |
-| ゲームのキーワード | [keywords.md](keywords.md)(疾駆/分身/庇護/封印/変貌/先物の定義一覧) |
+| ゲームのキーワード | [keywords.md](keywords.md)(疾駆/分身/庇護/断罪/変貌/先物/増強/生け贄の定義一覧) |
 | バランス検証の手順 | [simulation-guide.md](simulation-guide.md)(自己対戦シミュレーションの実行コマンド・ログの読み方) |
+| パッケージ化の手順 | [packaging-guide.md](packaging-guide.md)(配布用ビルドの作り方、注意点、動作確認手順) |
 
 上記は「今のゲームがどうなっているか」を表す現在地のドキュメント。ルール設計の
 壁打ち経緯(next-ruleset-design.md)とカードバランス調整の実測ログ
@@ -54,7 +55,7 @@ L_Lobby ──(デッキ構築)──> L_DeckBuilder ──(保存)──> L_Lob
 | レベル | GameMode | HUD | 役割 |
 |---|---|---|---|
 | `L_Lobby` | `ACGLobbyGameMode` | `UCGLobbyHUD` | 「デッキ構築」「対戦開始」「カード図鑑」「遊び方」「オンライン対戦」。対戦開始/カード図鑑/遊び方/オンライン対戦はレベル遷移を伴わない全画面モーダルレイヤー(下記) |
-| `L_DeckBuilder` | `ACGDeckBuilderGameMode` | `UCGDeckBuilderHUD` | 76種(次期ルール)から25枚(同名カード3枚まで重複可)を選ぶデッキ編成画面 |
+| `L_DeckBuilder` | `ACGDeckBuilderGameMode` | `UCGDeckBuilderHUD` | 78種(次期ルール)から25枚(同名カード3枚まで重複可)を選ぶデッキ編成画面 |
 | `L_Card_GamePrototype` | `ACGGameMode` | `UCGGameHUD` | 対人1vsAI1の対戦本編(オフライン/オンライン共通) |
 
 `ACGLobbyGameMode`/`ACGDeckBuilderGameMode` は対戦ロジックを持たない軽量GameMode
@@ -153,7 +154,7 @@ flowchart TD
 | `ACGGameState` | 対戦全体の公開状態(ターン数、フェーズ、勝者、マーケット6枠`MarketSlots`(各枠が出どころの山札を保持。下記「マーケット」参照)、両陣営の`ACGPlayerState`への参照、選択待ち状態`PendingChoice`) |
 | `ACGPlayerState` | 片側プレイヤーの全データ(HP/マナ/手札/デッキ/捨て札/場/発動中の色`ActiveColors`)と、ドロー・プレイ・購入・攻撃・死亡処理・カード効果ディスパッチ・変貌判定 |
 | `UCGAIOpponent` | AI側(Side 1固定)の意思決定ロジック。`RunTurn()`1回で購入→プレイ→攻撃→EndTurnまで同期的に完結させる。`ACGGameMode`の公開APIのみを呼ぶため、進行ルール自体はGameMode側に残る |
-| `UCGCardDatabase` | カードマスタ(静的データ)を保持する`BlueprintFunctionLibrary`。デッキ構築/カード図鑑には次期ルール76種のみを返す`GetBuildableCards()`を使い、`FindCard()`/`GetAllCardIds()`は旧24種(フォールバック)を含む`GetAllCards()`(100種)を参照する |
+| `UCGCardDatabase` | カードマスタ(静的データ)を保持する`BlueprintFunctionLibrary`。デッキ構築/カード図鑑には次期ルール78種のみを返す`GetBuildableCards()`を使い、`FindCard()`/`GetAllCardIds()`は旧24種(フォールバック)を含む`GetAllCards()`(102種)を参照する |
 
 `ACGPlayerState`と`UCGAIOpponent`を分けているのは、AIをより賢くする・難易度を
 分けるといった将来の拡張でGameMode本体を肥大化させないため。
@@ -183,7 +184,7 @@ flowchart TD
     ずっと有効な常在効果のうち、ターン終了時に判定するもの
     (例: `Handle_OnBuyEndTurnDiscardDraw`)。常在効果全般は
     `ACGPlayerState::HasBoardUnitWithEffect(EffectId)`で都度判定している
-    (例: 追撃の射手・市場監督官・連鎖術の教授は攻撃/購入/Spell発動のタイミングで
+    (例: 結晶の谺を読む射手・荒野の物々交換人・第六界を記す学者は攻撃/購入/Spell発動のタイミングで
     直接`HasBoardUnitWithEffect`を呼んでいる)
 - ハンドラは全て状態を持たない静的関数(関数ポインタ)なので、Side0/Side1どちらの
   `ACGPlayerState`インスタンスに対しても同じテーブルを使い回せる。
@@ -222,7 +223,7 @@ flowchart TD
 | `FlavorText` | カード下部の短いフレーバーテキスト(世界観演出用、UI表示のみ) |
 | `EffectId`/`EffectValue` | 上記のカード効果ディスパッチで使うキーと数値パラメータ |
 | `Ratio` | バランス調整用の補助値(`initial-cards-v0.1.md`のManaRatio)。ゲームロジックの判定には使わない |
-| `Tags`(カンマ区切り文字列) + `HasTag()` | キーワード能力。`"Haste"`(速攻)/`"Guard"`(庇護、現在は紫の護衛カードのみ)/`"Seal"`(封印)/`"Transform"`(変貌)/`"Discount"`(先物)/`"Clone"`(分身)の6種類(docs/keywords.md参照) |
+| `Tags`(カンマ区切り文字列) + `HasTag()` | キーワード能力。`"Haste"`(速攻)/`"Guard"`(庇護、現在は紫の護衛カードのみ)/`"Seal"`(断罪)/`"Transform"`(変貌)/`"Discount"`(先物)/`"Clone"`(分身)の6種類(docs/keywords.md参照) |
 | `TransformTargetCardId`/`TransformConditionId`/`TransformConditionValue` | 変貌(紫)の変貌先CardId・条件種別(`CGTransformConditionId`)・条件値。`Transform`タグを持つカードのみ意味を持つ(上記「カード効果ディスパッチ」の変貌の項参照) |
 | `CloneConditionId`/`CloneConditionValue` | 分身(緑)の発動条件種別(`CGCloneConditionId`)・条件値。`Clone`タグを持つカードのみ意味を持つ。コピー先は常に自分自身のためターゲットCardIdは不要(`ACGPlayerState::PerformClone`参照) |
 
@@ -344,7 +345,7 @@ Z順序で前面へ出す簡単な方法がない。そのため拡大表示は�
 - `ACGGameState::PendingChoice`(`FCGPendingChoice`、`CGTypes.h`)が選択待ち
   状態そのもの。`ChoiceType`(`ECGChoiceType`: `HandCard`/`GraveyardCard`/
   `EnemyOrFaceTarget`/`KeepOrBury`/`MarketCard`/`BuyDestination`/
-  `EnemyUnitTarget`(封印用、顔面は選べない)/`AllyUnitTarget`(対象指定の
+  `EnemyUnitTarget`(断罪用、顔面は選べない)/`AllyUnitTarget`(対象指定の
   味方強化用))で種類を持ち、候補の絞り込み条件(`MaxCost`/`bRequireSpell`)・
   再開する効果の`EffectId`・付随パラメータ(`PendingDamageAmount`/
   `PendingBuffAmount`等)を保持する。
@@ -370,12 +371,12 @@ Z順序で前面へ出す簡単な方法がない。そのため拡大表示は�
 
 ## 次期ルール(5色×75種)移行時の実装メモ
 
-`game-rules-minimum.md`のルール(5色パッシブ、封印/変貌/先物等のキーワード、
+`game-rules-minimum.md`のルール(5色パッシブ、断罪/変貌/先物等のキーワード、
 マーケットの出どころ追跡)をC++実装へ落とし込んだ際の、今後も価値のある
 技術的判断をまとめている。
 
 - キーワードは既存の`Tags`(カンマ区切り文字列、`HasTag()`)をそのまま拡張した。
-  新規に"Seal"(封印)、"Transform"(変貌)、"Discount"(先物)を追加する形にし、
+  新規に"Seal"(断罪)、"Transform"(変貌)、"Discount"(先物)を追加する形にし、
   既存のGuard/Haste判定コードは変更していない。
 - しきい値判定(17/25)はデッキ構築完了時点で確定するため、`ACGPlayerState`に
   「発動中の色(`TArray<ECGColor> ActiveColors`)」を試合開始時に1回だけ計算して
@@ -391,11 +392,11 @@ Z順序で前面へ出す簡単な方法がない。そのため拡大表示は�
   同時に並んだ場合に枠を一意特定できないため)。
 - 旧24種(無色)は`BuildLegacyCards()`として残置し、`FindCard`/`GetAllCardIds`
   からは引き続き参照可能。ただしデッキ構築画面・カード図鑑の一覧には次期
-  ルールの76種のみを表示する(`UCGCardDatabase::GetBuildableCards()`)。
+  ルールの78種のみを表示する(`UCGCardDatabase::GetBuildableCards()`)。
 - 色パッシブ・キーワード付き効果の多くは、対称性や実装コストの都合で原設計から
   簡略化している(例: B04の非対称デバフ→対称な-2/-2、P05/P10/P14の非対称バフ→
   対称なバフ、G10の常時再判定→登場時1回だけの判定)。同種の簡略化を行う際は
-  戦場の旗手(C013)を前例として踏襲する。
+  国無き旗手(C013)を前例として踏襲する。
 
 ### 既知の未実装・保留事項
 
@@ -477,7 +478,7 @@ Z順序で前面へ出す簡単な方法がない。そのため拡大表示は�
   discard-graveyardヘルパー/`ApplyCardTypeColor`/`ApplyCardTypeIcon`)を
   switch文に書き換える。
 - **カードを1枚増やす**: `CGCardDatabase.cpp`の`BuildNextRulesetCards()`
-  (次期ルールの76種)に`MakeCard(...)`を1行追加するだけ(実データはC++側の
+  (次期ルールの78種)に`MakeCard(...)`を1行追加するだけ(実データはC++側の
   みが正。`Content/CardGame/Data`にDataAsset等は置いていない)。旧24種は
   `BuildLegacyCards()`、変貌先カードは`BuildTransformTargetCards()`に分けている。
 - **選択式のカード効果/対象選択を増やす**: 上記「選択待ち(PendingChoice)の

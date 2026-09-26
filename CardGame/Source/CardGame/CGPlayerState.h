@@ -97,7 +97,7 @@ public:
 	UPROPERTY(BlueprintReadOnly, Replicated, Category = "CardGame")
 	int32 DeckCount = 0;
 
-	// 街道の突撃兵(C009)判定用、および赤パッシブ判定用(3回目で発動)。
+	// 廃墟街道の突撃兵(C009)判定用、および赤パッシブ判定用(3回目で発動)。
 	// このターン何枚目のカードをプレイしたか。StartTurnで0に戻る。
 	UPROPERTY(BlueprintReadOnly, Replicated, Category = "CardGame")
 	int32 CardsPlayedThisTurn = 0;
@@ -109,7 +109,7 @@ public:
 	UPROPERTY()
 	TArray<FName> CardsPlayedThisMatch;
 
-	// 連鎖術の教授(C016)判定用: このターン何枚目のSpellをプレイしたか。StartTurnで0に戻る。
+	// 第六界を記す学者(C016)判定用: このターン何枚目のSpellをプレイしたか。StartTurnで0に戻る。
 	UPROPERTY(BlueprintReadOnly, Replicated, Category = "CardGame")
 	int32 SpellsPlayedThisTurn = 0;
 
@@ -119,11 +119,11 @@ public:
 	UPROPERTY(BlueprintReadOnly, Replicated, Category = "CardGame")
 	int32 DrawsThisTurn = 0;
 
-	// 市場の仲買人(C007)判定用: このターン購入したか。StartTurnでfalseに戻る。
+	// 荒野の行商人(C007)判定用: このターン購入したか。StartTurnでfalseに戻る。
 	UPROPERTY(BlueprintReadOnly, Replicated, Category = "CardGame")
 	bool bBoughtThisTurn = false;
 
-	// 追撃の射手(C010)判定用: このターンにすでに1回発動したか。StartTurnでfalseに戻る。
+	// 結晶の谺を読む射手(C010)判定用: このターンにすでに1回発動したか。StartTurnでfalseに戻る。
 	UPROPERTY(BlueprintReadOnly, Replicated, Category = "CardGame")
 	bool bAllySpellPingUsedThisTurn = false;
 
@@ -150,7 +150,7 @@ public:
 	int32 AlliesDiedThisMatch = 0; // 赤: 味方Unitが10体死亡
 
 	UPROPERTY(BlueprintReadOnly, Category = "CardGame")
-	int32 CardsPurchasedThisMatch = 0; // 橙: マーケットから10枚購入
+	int32 CardsPurchasedThisMatch = 0; // 橙: マーケットから9枚購入
 
 	UPROPERTY(BlueprintReadOnly, Category = "CardGame")
 	int32 CardsDrawnThisMatch = 0; // 青: カードを20枚ドロー
@@ -190,12 +190,12 @@ public:
 	UPROPERTY(BlueprintReadOnly, Replicated, Category = "CardGame")
 	bool bPurplePassiveUsedThisTurn = false;
 
-	// P11予見の魔導師用: 次に自分がプレイするUnit1体のコストに適用される割引。
+	// P11取り次ぎの女官用: 次に自分がプレイするUnit1体のコストに適用される割引。
 	// 使うと0に戻る(docs/architecture.md「次期ルール移行時の実装メモ」参照)。
 	UPROPERTY(BlueprintReadOnly, Replicated, Category = "CardGame")
 	int32 NextUnitPlayDiscount = 0;
 
-	// 紫パッシブ「胎動する秘術」等の判定用: このターンに変貌が成功した回数。StartTurnで0に戻る。
+	// 紫パッシブ「王座を窺う者」等の判定用: このターンに変貌が成功した回数。StartTurnで0に戻る。
 	UPROPERTY(BlueprintReadOnly, Replicated, Category = "CardGame")
 	int32 TransformsSucceededThisTurn = 0;
 
@@ -207,7 +207,7 @@ public:
 
 	// 山札が0枚の状態で引こうとした場合、捨て札をシャッフルして山札に戻し
 	// ライフを減らす(山札切れペナルティ、docs/next-ruleset-design.md)。
-	// 捨て札も0枚なら(封印等で大半を失った極端なケース)falseを返しbIsDefeatedを立てる。
+	// 捨て札も0枚なら(断罪等で大半を失った極端なケース)falseを返しbIsDefeatedを立てる。
 	UFUNCTION(BlueprintCallable, Category = "CardGame")
 	bool DrawCard();
 
@@ -217,14 +217,22 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CardGame")
 	FName DrawCardForMarket();
 
-	// CGState はマーケットを参照する効果(例: 市場調達)のためだけに使う。不要なら nullptr で可。
+	// CGState はマーケットを参照する効果(例: 廃墟に転がる戦利品)のためだけに使う。不要なら nullptr で可。
 	UFUNCTION(BlueprintCallable, Category = "CardGame")
 	bool PlayCardFromHand(FName CardId, ACGPlayerState* Opponent, int32 TargetUnitIndex, ACGGameState* CGState = nullptr);
+
+	// 手札から出したUnitを実際に場へ追加し、登場時効果まで解決する
+	// (PlayCardFromHand()から切り出した共通処理)。生け贄(Sacrifice)持ちの
+	// Unitは、生け贄選択(AllyUnitTarget選択待ち)が解決してから
+	// ACGGameMode::ResolvePendingChoiceAllyTargetがこれを呼ぶため、
+	// PlayCardFromHand以外からも呼べるようpublicにしている
+	// (docs/keywords.md「生け贄(Sacrifice)」参照)。
+	void SpawnUnitFromHandOnBoard(FName CardId, const FCGCardDef& Def, bool bIsSecondOrLaterPlayThisTurn, ACGPlayerState* Opponent, ACGGameState* CGState);
 
 	UFUNCTION(BlueprintCallable, Category = "CardGame")
 	bool BuyCard(FName CardId);
 
-	// 今すぐ購入した場合に実際に適用される割引の合計(市場監督官/橙パッシブ/
+	// 今すぐ購入した場合に実際に適用される割引の合計(荒野の物々交換人/橙パッシブ/
 	// 先物/O13の重ね掛けをBuyCard()と同じ式で計算する、状態を変えない参照用)。
 	// UI側が「今買うといくら軽減されるか」を表示するために使う
 	// (「割引が分かりにくい」というフィードバックへの対応)。
@@ -242,8 +250,8 @@ public:
 
 	// 場のHP0以下ユニットを取り除き、墓地へ送る。OnDeathDraw を持つユニットが死亡した分の
 	// ドロー枚数を返す(実際のドローはGameMode側で行う=このPlayerStateを跨いだ効果もあるため)。
-	// Opponentは死亡時に敵リーダーへダメージを与える効果(R06自爆の火薬兵、
-	// R12怨嗟の炎術師)のために渡す(呼び出し側は常にこのユニットの持ち主から見た
+	// Opponentは死亡時に敵リーダーへダメージを与える効果(R06捨て身の道場破り、
+	// R12黒鉄の刀鍛冶)のために渡す(呼び出し側は常にこのユニットの持ち主から見た
 	// 敵側を渡すこと。例: 攻撃ならExecuteAttackの相手側)。CGStateは死亡による
 	// 変貌条件の再判定(ApplyTransformIfConditionMet)のために渡す。
 	UFUNCTION(BlueprintCallable, Category = "CardGame")
@@ -264,13 +272,20 @@ public:
 	UFUNCTION(BlueprintPure, Category = "CardGame")
 	bool HasBoardUnitWithEffect(FName EffectId) const;
 
+	// B06「深淵の封印」用: Enemy(このプレイヤーの相手)がSuppressEnemyUnitAbilities
+	// を持つUnitを場に出している間、このプレイヤーのUnitの能力(登場時/死亡時/
+	// 常在アウラ等の発動)はすべて発動しない。各効果の発動箇所はこの関数で
+	// 事前にチェックすること(docs/next-ruleset-cards-v1.md「青」参照)。
+	UFUNCTION(BlueprintPure, Category = "CardGame")
+	bool AreUnitAbilitiesSuppressedByEnemy(const ACGPlayerState* Enemy) const;
+
 	UFUNCTION(BlueprintCallable, Category = "CardGame")
 	void RefreshManaForNewTurn();
 
 	// EndTurn時に呼ぶ。選択不要なターン終了時常在効果があればここで解決する
-	// (市場の仲買人(C007)は選択式のためACGGameMode::RequestEndTurnで個別処理する。
+	// (荒野の行商人(C007)は選択式のためACGGameMode::RequestEndTurnで個別処理する。
 	// docs/architecture.md「選択待ち(PendingChoice)の仕組み」参照)。Opponentは
-	// 敵Unitを対象にする効果(B10衰弱の監視者等)のために渡す。
+	// 敵Unitを対象にする効果(B10弱点の考察官等)のために渡す。
 	UFUNCTION(BlueprintCallable, Category = "CardGame")
 	void ResolveEndTurnEffects(ACGPlayerState* Opponent);
 
@@ -293,43 +308,55 @@ public:
 	bool MoveSpecificDiscardCardToHand(FName CardId);
 
 	// 墓地からUnitをランダムに1枚探してデッキの一番上へ戻す
-	// (霊廟の守り手(C014)はカード自身が「ランダムで」と明記しているため選択式にしない)。
+	// (廃墟の霊廟守り(C014)はカード自身が「ランダムで」と明記しているため選択式にしない)。
 	bool TryMoveRandomDiscardUnitToDeckTop();
 
-	// デッキの一番上をデッキの一番下へ移す(先駆けの斥候(C001)の「上下選択」で
+	// デッキの一番上をデッキの一番下へ移す(廃墟を渡る斥候(C001)の「上下選択」で
 	// 「下に送る」を選んだ結果を反映する。docs/architecture.md「選択待ち(PendingChoice)の仕組み」
 	// 「④山札の上を見て上下を選ぶ」)。
 	UFUNCTION(BlueprintCallable, Category = "CardGame")
 	bool MoveDeckTopToBottom();
 
 	// マーケットや購入を介さず、直接カードデータIDを指定して場にユニットを1体追加する
-	// (見習い召集の「1/1トークンを出す」等、実在カードではないユニットの生成に使う)。
+	// (彷徨う者たちの合流の「1/1トークンを出す」等、実在カードではないユニットの生成に使う)。
 	void AddBoardUnitDirect(FName CardId, int32 Atk, int32 Hp, bool bCanAttackImmediately, bool bHasGuard);
 
 	// マーケットからUnit1枚を選び、コストを支払わずそのまま場に出す選択を開始する
-	// (O15独占商人、FIN_ORANGE黄金の帝王で使用)。RemainingRepeatsを渡すと、
+	// (O15黒鉄の買い占め屋、FIN_ORANGE港を興す者で使用)。RemainingRepeatsを渡すと、
 	// この選択が解決された直後にACGGameMode::ResolvePendingChoiceWithCard側で
-	// 同じ選択が続けて開始される(黄金の帝王のように複数枚を1枚ずつ選ばせる場合に
+	// 同じ選択が続けて開始される(港を興す者のように複数枚を1枚ずつ選ばせる場合に
 	// 使う。docs/next-ruleset-cards-v1.md「橙」。「プレイヤーがマーケットのカードを
 	// 選択して無料でプレイできるカードを選びたい」というフィードバックへの対応で、
 	// 以前はO15と違いプレイヤーに選ばせず自動で3枚デプロイしていた)。候補が
 	// 無ければ何もしない(選択待ちには入らない)。
 	void BeginMarketDeployChoice(ACGGameState* CGState, int32 MaxCost, int32 RemainingRepeats);
 
-	// 封印(青、docs/game-rules-minimum.md): 対象ユニットを墓地に送らず場から
-	// 完全に取り除く(死亡時効果も発動しない、追放の扱い)。取り除いたユニットの
-	// (変貌前の)コストをOutSealedCostへ返す。
+	// 追放(青フィニッシャー専用): 対象ユニットを墓地に送らず場から完全に取り除く
+	// (死亡時効果も発動しない、真の除去)。取り除いたユニットの(変貌前の)
+	// コストをOutSealedCostへ返す。以前は「封印」キーワード全体(B01/B03/B06/
+	// B07/B09/B11/B13/B15等)がこの関数を使っていたが、「ユニットを死亡させる
+	// キーワード能力にしてほしい」というフィードバックを受け、キーワード側は
+	// CondemnUnit()(通常の死亡処理を経由する)に切り替えた。この関数は
+	// FIN_BLUE(書庫の大賢者)の「敵の場のUnitをすべて追放する」効果専用として
+	// 残している(docs/keywords.md「断罪(Condemn)」参照)。
 	UFUNCTION(BlueprintCallable, Category = "CardGame")
 	bool SealUnit(int32 UnitIndex, int32& OutSealedCost);
 
-	// B04幻惑の魔道士用: 封印が成立するたびに呼ぶ。自分の場にOnSealDamageFace1を
-	// 持つUnitがいれば、Opponentへ1ダメージを与える(1回の封印につき最大1回)。
-	// 封印が成立する全ての箇所(ACGGameMode::ResolvePendingChoiceSealTarget、
+	// 断罪(Condemn、青、docs/keywords.md): 対象ユニットのHpを0にする(通常の
+	// 死亡処理を経由させるため、その場では墓地送り・死亡時効果を行わない)。
+	// 呼び出し側が必ずACGGameMode::ResolveDeathsForBothSides()等の死亡処理を
+	// 続けて呼ぶこと。取り除いたユニットの(変貌前の)コストをOutCostへ返す。
+	UFUNCTION(BlueprintCallable, Category = "CardGame")
+	bool CondemnUnit(int32 UnitIndex, int32& OutCost);
+
+	// B04頁繰りの魔道士用: 断罪が成立するたびに呼ぶ。自分の場にOnSealDamageFace1を
+	// 持つUnitがいれば、Opponentへ1ダメージを与える(1回の断罪につき最大1回)。
+	// 断罪が成立する全ての箇所(ACGGameMode::ResolvePendingChoiceSealTarget、
 	// ApplyOnTurnStartAuraEffects内のB14)から呼ぶ。
 	UFUNCTION(BlueprintCallable, Category = "CardGame")
 	void NotifySealSucceeded(ACGPlayerState* Opponent);
 
-	// P13解放の詠唱用: 変貌条件を無視して、変貌可能な(TransformTargetCardIdを
+	// P13玉座の噂用: 変貌条件を無視して、変貌可能な(TransformTargetCardIdを
 	// 持つ)場の味方Unit全てを即座に変貌させる。
 	UFUNCTION(BlueprintCallable, Category = "CardGame")
 	void ForceTransformAll(ACGPlayerState* Opponent, ACGGameState* CGState);
@@ -377,8 +404,10 @@ public:
 
 	// 自分のターン開始時に、場のUnitが持つ「ターン開始時」常在効果を判定する
 	// (次期ルール、フェーズ4b。B05の1ドロー、O08の購入割引、B14の敵最高コスト
-	// 封印など)。Opponentは敵Unitを対象にする効果(B14)のために渡す。
-	void ApplyOnTurnStartAuraEffects(ACGPlayerState* Opponent);
+	// 断罪など)。Opponentは敵Unitを対象にする効果(B14)のために渡す。CGStateは
+	// B14の断罪(死亡処理)がACGGameState::TurnCount等の変貌条件を参照する
+	// RemoveDeadUnitsAndGetDeathDrawCount()に必要。
+	void ApplyOnTurnStartAuraEffects(ACGPlayerState* Opponent, ACGGameState* CGState);
 
 	// 分身(緑、docs/next-ruleset-cards-v1.md「緑」)。場の全ユニットについて、
 	// 分身条件が満たされていれば分身させる(味方Unit数条件のような進行度を

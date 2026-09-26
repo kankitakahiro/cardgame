@@ -357,6 +357,40 @@ namespace
 		}
 	}
 
+	// フィニッシャー(docs/game-rules-minimum.md「フィニッシャー」)の発動条件の
+	// 進行度合いを「現在値/必要値」の形でテキスト化する。「フィニッシャーが
+	// 出る条件をどれだけ満たしているのか一目でわかるようにしてほしい」という
+	// フィードバックへの対応。閾値・後手ハンデ(-2)は
+	// ACGPlayerState::CheckAndSpawnFinisher()と必ず一致させること。
+	FString GetFinisherProgressText(const ACGPlayerState* Player, ECGColor Color)
+	{
+		if (!Player)
+		{
+			return FString();
+		}
+		if (Player->FinishersSpawned.Contains(Color))
+		{
+			return TEXT("登場済み");
+		}
+
+		int32 Current = 0;
+		int32 Threshold = 0;
+		switch (Color)
+		{
+		case ECGColor::Red:    Current = Player->AlliesDiedThisMatch;       Threshold = 10; break;
+		case ECGColor::Orange: Current = Player->CardsPurchasedThisMatch;   Threshold = 9;  break;
+		case ECGColor::Blue:   Current = Player->CardsDrawnThisMatch;       Threshold = 18; break;
+		case ECGColor::Green:  Current = Player->BoardUnits.Num();          Threshold = 8;  break;
+		case ECGColor::Purple: Current = Player->UnitsTransformedThisMatch; Threshold = 5;  break;
+		default:               return FString();
+		}
+
+		const int32 SecondPlayerBonus = Player->bWentSecond ? 2 : 0;
+		Threshold = FMath::Max(0, Threshold - SecondPlayerBonus);
+		Current = FMath::Min(Current, Threshold);
+		return FString::Printf(TEXT("%d/%d"), Current, Threshold);
+	}
+
 	// HP以外の付随情報(マナ・山札・墓地・コイン・パッシブ・割引等)をまとめる。
 	// HPはMTG Arena風のライフオーブ(円形バッジ、MakeCircleBadge/EnemyOrbText/
 	// SelfOrbText)側で大きく表示するため、ここでは扱わない。敵は上、自分は下に
@@ -397,14 +431,35 @@ namespace
 			PassiveText = FString::Join(ColorLabels, TEXT("/"));
 		}
 
-		// 今すぐ購入すれば実際に何点軽減されるか(市場監督官/橙パッシブ未使用/
+		// 今すぐ購入すれば実際に何点軽減されるか(荒野の物々交換人/橙パッシブ未使用/
 		// 先物/O13の合計)。
 		const int32 CurrentDiscount = Player->ComputeCurrentPurchaseDiscount();
+
+		// フィニッシャーの進行度も、パッシブと同様にアクティブな色ごとに
+		// 「現在値/必要値」を並べる(「登場済み」の色は達成済みとわかる表記にする)。
+		FString FinisherText = TEXT("-");
+		if (Player->ActiveColors.Num() > 0)
+		{
+			TArray<FString> FinisherLabels;
+			for (const ECGColor Color : Player->ActiveColors)
+			{
+				const FString Progress = GetFinisherProgressText(Player, Color);
+				if (!Progress.IsEmpty())
+				{
+					FinisherLabels.Add(FString::Printf(TEXT("%s: %s"), *GetColorDisplayName(Color), *Progress));
+				}
+			}
+			if (FinisherLabels.Num() > 0)
+			{
+				FinisherText = FString::Join(FinisherLabels, TEXT("/"));
+			}
+		}
 
 		TArray<FString> ExtraParts;
 		ExtraParts.Add(FString::Printf(TEXT("コイン %d"), Player->PurchaseMana));
 		ExtraParts.Add(FString::Printf(TEXT("購入割引 %d"), CurrentDiscount));
 		ExtraParts.Add(FString::Printf(TEXT("パッシブ[%s]"), *PassiveText));
+		ExtraParts.Add(FString::Printf(TEXT("フィニッシャー[%s]"), *FinisherText));
 
 		if (Player->bBuffBoardOnPurchaseThisTurn)
 		{
@@ -1227,8 +1282,13 @@ void UCGGameHUD::RefreshUI()
 		// (CGState->TurnCount自体は先攻1ターン目判定等の内部ロジック用に
 		// プレイヤーのターンごと+1のまま維持し、ここでは表示だけ変換する)。
 		const int32 DisplayRoundNumber = (CGState->TurnCount + 1) / 2;
+		// 「自分と相手のどちらが先攻/後攻かをわかるようにしてほしい」という
+		// フィードバックへの対応。bWentSecondはInitializeMatch等で試合開始時に
+		// 一度だけ決まり、以後変わらないので毎ターン表示して問題ない。
+		const FString SelfFirstOrSecondLabel = SelfSide->bWentSecond ? TEXT("後攻") : TEXT("先攻");
 		StatusText->SetText(FText::FromString(FString::Printf(
-			TEXT("Turn %d - %s%s"), DisplayRoundNumber, bHumanTurn ? TEXT("あなたの番") : TEXT("相手の番"), *TurnOneHint)));
+			TEXT("Turn %d [あなたは%s] - %s%s"), DisplayRoundNumber, *SelfFirstOrSecondLabel,
+			bHumanTurn ? TEXT("あなたの番") : TEXT("相手の番"), *TurnOneHint)));
 	}
 
 	// 勝敗確定後のみ「ロビーへ戻る」導線を表示する(docs/architecture.md「レベルと画面遷移」)。
@@ -1265,8 +1325,12 @@ void UCGGameHUD::RefreshUI()
 
 	// EnemyOrFaceTarget選択待ち中だけ「顔面を狙う」ボタンを表示する。敵に守護がいる
 	// 間は顔面を選べない(必ず守護ユニットが対象になる)ため、そのときは隠す。
+	// bRequireUnitTarget(R05黒鉄の抜き打ち等、Unit限定の効果)のときも同様に隠す
+	// (「Unit限定/リーダー限定のカードがどちらも選べてしまうバグがある」という
+	// フィードバックへの対応)。
 	const bool bShowTargetFace = bHumanIsChoosing
 		&& CGState->PendingChoice.ChoiceType == ECGChoiceType::EnemyOrFaceTarget
+		&& !CGState->PendingChoice.bRequireUnitTarget
 		&& !EnemySide->HasGuardUnit();
 	TargetFaceButton->SetVisibility(bShowTargetFace ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 
@@ -1300,7 +1364,7 @@ void UCGGameHUD::RefreshUI()
 	EnemySecondaryInfoText->SetText(FText::FromString(FormatPlayerSecondaryInfoText(EnemySide)));
 	SelfSecondaryInfoText->SetText(FText::FromString(FormatPlayerSecondaryInfoText(SelfSide)));
 
-	// リーダーHPの変化を検知して、原因(戦闘の顔面攻撃/バーンSpell/封印連動ダメージ/
+	// リーダーHPの変化を検知して、原因(戦闘の顔面攻撃/バーンSpell/断罪連動ダメージ/
 	// 回復など)を問わずライフオーブの位置にダメージ(赤)/回復(緑)のポップアップを
 	// 表示する(「ダメージなどの表記を変更してほしい」というフィードバックへの
 	// 対応。戦闘でユニットが受けるダメージは引き続きPlayAttackAnimation()側で
@@ -1516,7 +1580,7 @@ void UCGGameHUD::PopulateBoardRow(UHorizontalBox* Box, ACGPlayerState* Side, boo
 		&& CGState->PendingChoice.ChoiceType == ECGChoiceType::AllyUnitTarget
 		&& CGState->PendingChoice.SideIndex == CGState->CurrentTurnPlayerIndex;
 
-	// 敵の場に対する選択待ち(攻撃対象/カード効果ダメージ対象、封印対象)の間、
+	// 敵の場に対する選択待ち(攻撃対象/カード効果ダメージ対象、断罪対象)の間、
 	// 選べない相手ユニットを薄く・クリック不可にする(「選べない対象は選択できない
 	// ように薄灰色にする工夫がほしい」というフィードバックへの対応)。以前は
 	// クリックしても何も起きない、または守護のときは選択UIすら出ないため
@@ -2111,7 +2175,7 @@ void UCGGameHUD::HandleEnemyBoardSlotClicked(int32 SlotIndex)
 		return;
 	}
 
-	// 封印(青、次期ルール)対象の選択。EnemyOrFaceTargetと異なり顔面は選べないため
+	// 断罪(青、次期ルール)対象の選択。EnemyOrFaceTargetと異なり顔面は選べないため
 	// 専用のChoiceTypeで扱う(docs/game-rules-minimum.md「青」)。
 	if (CGState->PendingChoice.ChoiceType == ECGChoiceType::EnemyUnitTarget)
 	{
