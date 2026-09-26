@@ -946,6 +946,15 @@ bool ACGGameMode::RequestPlayCard(int32 SideIndex, FName CardId, int32 TargetUni
 
 	ACGPlayerState* Side = CGState->Sides[SideIndex];
 	ACGPlayerState* Opponent = GetOpponent(SideIndex);
+
+	// 「対象を選ぶ操作を取りやめて戻れるようにしてほしい。カードを完全にプレイした
+	// 後は戻れない」というフィードバックへの対応。PlayCardFromHand以降の処理が
+	// 両陣営の状態を変え得るため、その直前の状態を保存しておく。実際に人間の
+	// 対象選択待ちが残った場合だけ、下で「キャンセル可能」として有効化する
+	// (FCGPlayerStateSnapshotのコメント参照)。
+	const FCGPlayerStateSnapshot PreCancelSelfSnapshot = Side ? Side->CaptureSnapshot() : FCGPlayerStateSnapshot();
+	const FCGPlayerStateSnapshot PreCancelOpponentSnapshot = Opponent ? Opponent->CaptureSnapshot() : FCGPlayerStateSnapshot();
+
 	const bool bResult = Side && Side->PlayCardFromHand(CardId, Opponent, TargetUnitIndex, CGState);
 
 	if (bResult)
@@ -996,6 +1005,18 @@ bool ACGGameMode::RequestPlayCard(int32 SideIndex, FName CardId, int32 TargetUni
 		// (docs/architecture.md「選択待ち(PendingChoice)の仕組み」)。
 		AutoResolveChoiceIfAI();
 		CheckWinLose();
+
+		// AIが即決せず、このプレイの結果として人間の対象選択待ち(Spell/Unit登場時の
+		// 対象、生け贄の対象等)がまだ残っているなら、上で保存したスナップショットを
+		// 使ってキャンセル可能にする。既に勝敗が決まっている場合はキャンセルの
+		// 対象にしない(勝敗確定後に状態を戻すと矛盾するため)。
+		if (CGState->PendingChoice.IsActive() && CGState->PendingChoice.SideIndex == SideIndex
+			&& CGState->WinnerPlayerIndex == -1)
+		{
+			CGState->PendingChoice.bCancellable = true;
+			CancelSnapshotSelf = PreCancelSelfSnapshot;
+			CancelSnapshotOpponent = PreCancelOpponentSnapshot;
+		}
 		NotifyStateChanged();
 	}
 	UE_LOG(LogCardGame, Log, TEXT("RequestPlayCard: Side=%d Card=%s Target=%d -> %s"),
@@ -1131,8 +1152,55 @@ bool ACGGameMode::RequestAttack(int32 AttackerSideIndex, int32 AttackerUnitIndex
 	Choice.EffectId = FName(CGEffectId::AttackTarget);
 	Choice.AttackerUnitIndex = AttackerUnitIndex;
 	Choice.PromptText = TEXT("攻撃対象を選んでください(敵ユニットまたは顔面)");
+	// 攻撃対象選択はbCanAttack等をまだ何も変えていないため、キャンセル可能にする
+	// (「攻撃をして対象を選ぼうとしているときに取りやめて戻れるようにしてほしい。
+	// 攻撃を完了した場合は戻れない」というフィードバックへの対応。ExecuteAttackで
+	// bCanAttack=falseになるのは対象確定後なので、選択待ちの間は何も戻す必要が無い)。
+	Choice.bCancellable = true;
 	BeginChoice(Choice);
 	AutoResolveChoiceIfAI();
+	return true;
+}
+
+bool ACGGameMode::RequestCancelChoice(int32 SideIndex)
+{
+	ACGGameState* CGState = GetCGGameState();
+	if (!CGState || CGState->PendingChoice.SideIndex != SideIndex || !CGState->PendingChoice.IsActive()
+		|| !CGState->PendingChoice.bCancellable)
+	{
+		return false;
+	}
+
+	const FCGPendingChoice Choice = CGState->PendingChoice;
+	ACGPlayerState* Side = CGState->Sides.IsValidIndex(SideIndex) ? CGState->Sides[SideIndex] : nullptr;
+	if (!Side)
+	{
+		return false;
+	}
+
+	if (Choice.EffectId == FName(CGEffectId::AttackTarget))
+	{
+		// 攻撃対象選択のキャンセル: bCanAttackはExecuteAttackが対象確定後に初めて
+		// falseにするため、この時点では何も変わっていない。選択待ちを消すだけでよい。
+		CGState->AppendActionLog(SideIndex, TEXT("攻撃を取りやめた"));
+	}
+	else
+	{
+		// カードプレイのキャンセル: RequestPlayCardがプレイ直前に保存した
+		// スナップショットへ両陣営とも丸ごと復元する。
+		Side->RestoreFromSnapshot(CancelSnapshotSelf);
+		if (ACGPlayerState* Opponent = GetOpponent(SideIndex))
+		{
+			Opponent->RestoreFromSnapshot(CancelSnapshotOpponent);
+		}
+		CGState->AppendActionLog(SideIndex, TEXT("カードの使用を取りやめた"));
+	}
+
+	CGState->PendingChoice = FCGPendingChoice();
+	CheckWinLose();
+	NotifyStateChanged();
+	UE_LOG(LogCardGame, Log, TEXT("RequestCancelChoice: Side=%d Effect=%s -> OK"),
+		SideIndex, *Choice.EffectId.ToString());
 	return true;
 }
 

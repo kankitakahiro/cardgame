@@ -9,10 +9,19 @@
 `FPlatformMisc::RequestExit()`でエンジンを自動終了させるため、GUIを手動で
 閉じる必要は無い。プロセスの終了を待ってからログを集計すればよい。
 
+**シミュレーションを実行したら、毎回その結果をまとめて出力/報告すること。**
+「毎回シミュレーションの結果をまとめて出力してくれるようにしてほしい」という
+フィードバックへの対応。`scripts/run_simulation.ps1`経由なら自動でこれを行う
+(下記「実行コマンド」参照、`SimSummary`行を省略せず全て表示する)。手動で
+UnrealEditor.exeを直接起動した場合(下記「手動で実行する場合」)も、完了後に
+必ず`SimSummary`行を`grep`して、色ごとの総合勝率・対面ごとの相性・カードごとの
+勝率(CardStats)まで含めた全体をまとめてユーザーへ報告する。色ごとの総合勝率
+だけを抜粋して終わらない。
+
 ## 実行コマンド(推奨: スクリプト経由)
 
 ```bash
-pwsh -File "C:/Users/kanki/Documents/app-develop/game/cardgame/scripts/run_simulation.ps1" -Matches 3000
+pwsh -File "C:/Users/kanki/Documents/app-develop/game/cardgame/scripts/run_simulation.ps1" -Matches 1000
 ```
 
 `scripts/run_simulation.ps1`が以下を自動で行う。
@@ -25,8 +34,10 @@ pwsh -File "C:/Users/kanki/Documents/app-develop/game/cardgame/scripts/run_simul
 
 オプション:
 
-- `-Matches <N>`: 対戦数(既定3000)。軽い確認は500、カードごとの勝率
-  (下記CardStatsの母数が20試合以上必要)まで見たい/色の相性まで見たいときは3000。
+- `-Matches <N>`: 対戦数(既定1000。「シミュレーションの回数を1000回に減らして
+  ほしい」というフィードバックを受け、以前の既定3000から変更した)。軽い確認は
+  500、カードごとの勝率(下記CardStatsの母数が20試合以上必要)まで見たい/色の
+  相性まで見たいときは3000まで増やす。
 - `-DisableBuy`: マーケット購入を無効化する診断用フラグ(`-SimDisableBuy`)を付与する。
 
 ## 手動で実行する場合
@@ -40,7 +51,7 @@ rm -f "C:/Users/kanki/Documents/app-develop/game/cardgame/CardGame/Saved/Logs/Ca
 "/c/Program Files/Epic Games/UE_5.8/Engine/Binaries/Win64/UnrealEditor.exe" \
   "C:/Users/kanki/Documents/app-develop/game/cardgame/CardGame/CardGame.uproject" \
   L_Card_GamePrototype -game -windowed -resX=800 -resY=600 \
-  -SimulateMatches=3000 -log
+  -SimulateMatches=1000 -log
 ```
 
 - 起動元のシェルは、上記コマンドがエンジンの終了(自動)まで制御を返さない

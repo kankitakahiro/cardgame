@@ -66,6 +66,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CardGame")
 	void RequestEndTurn(int32 SideIndex);
 
+	// 「対象を選ぶ操作を取りやめて戻れるようにしてほしい。カードを完全にプレイした/
+	// 攻撃を完了した後は戻れない」というフィードバックへの対応。現在の選択待ちが
+	// キャンセル可能(FCGPendingChoice::bCancellable)なときだけ、その選択を取りやめて
+	// 手前の状態(攻撃対象選択なら何もしていない状態、カードプレイ由来の対象選択なら
+	// プレイ直前の両陣営の状態)へ戻す。
+	UFUNCTION(BlueprintCallable, Category = "CardGame")
+	bool RequestCancelChoice(int32 SideIndex);
+
 	// 選択式カード効果/攻撃対象選択(docs/architecture.md「選択待ち(PendingChoice)の仕組み」)。
 	// 人間側の選択待ちを開始する。AI側は各効果ハンドラがこれを呼ばず、
 	// AutoResolveChoiceIfAI()経由でその場即決する。
@@ -208,6 +216,14 @@ protected:
 
 	// オンライン対戦: PostLogin()で接続した順に0, 1と割り振るためのカウンタ。
 	int32 NumOnlineConnections = 0;
+
+	// RequestCancelChoice用のスナップショット(カードプレイ直前の両陣営の状態)。
+	// RequestPlayCardがPendingChoiceをbCancellable=trueにするときだけ書き込み、
+	// 選択が解決される(通常解決/キャンセルのどちらでも)たびに読み捨てる想定
+	// (FCGPlayerStateSnapshotのコメント参照)。攻撃対象選択のキャンセルは状態を
+	// 何も変えていないため、これを使わない。
+	FCGPlayerStateSnapshot CancelSnapshotSelf;
+	FCGPlayerStateSnapshot CancelSnapshotOpponent;
 
 	// オンライン対戦: SubmitDeckForSideで受け取った、まだ試合開始に使っていない
 	// デッキ(SideIndex→デッキ)。両陣営分(2件)揃うとInitializeOnlineMatch()を呼ぶ。

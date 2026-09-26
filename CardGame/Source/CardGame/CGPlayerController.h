@@ -46,6 +46,12 @@ public:
 	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerRequestEndTurn();
 
+	// 「対象を選ぶ操作を取りやめて戻れるようにしてほしい」というフィードバックへの
+	// 対応。現在の選択待ちがキャンセル可能な場合だけ、手前の状態へ戻す
+	// (ACGGameMode::RequestCancelChoice参照)。
+	UFUNCTION(Server, Reliable, WithValidation)
+	void ServerRequestCancelChoice();
+
 	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerResolveChoiceWithCard(FName ChosenCardId);
 

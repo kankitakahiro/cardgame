@@ -50,6 +50,73 @@ void ACGPlayerState::SyncPublicCardCounts()
 	DeckCount = DeckCardIds.Num();
 }
 
+FCGPlayerStateSnapshot ACGPlayerState::CaptureSnapshot() const
+{
+	FCGPlayerStateSnapshot Snapshot;
+	Snapshot.CurrentHP = CurrentHP;
+	Snapshot.CurrentMana = CurrentMana;
+	Snapshot.PurchaseMana = PurchaseMana;
+	Snapshot.bIsDefeated = bIsDefeated;
+	Snapshot.HandCardIds = HandCardIds;
+	Snapshot.DeckCardIds = DeckCardIds;
+	Snapshot.DiscardCardIds = DiscardCardIds;
+	Snapshot.BoardUnits = BoardUnits;
+	Snapshot.CardsPlayedThisTurn = CardsPlayedThisTurn;
+	Snapshot.CardsPlayedThisMatch = CardsPlayedThisMatch;
+	Snapshot.SpellsPlayedThisTurn = SpellsPlayedThisTurn;
+	Snapshot.DrawsThisTurn = DrawsThisTurn;
+	Snapshot.bBoughtThisTurn = bBoughtThisTurn;
+	Snapshot.bAllySpellPingUsedThisTurn = bAllySpellPingUsedThisTurn;
+	Snapshot.bBuffBoardOnPurchaseThisTurn = bBuffBoardOnPurchaseThisTurn;
+	Snapshot.bAllPurchasesDiscountedThisTurn = bAllPurchasesDiscountedThisTurn;
+	Snapshot.AlliesDiedThisMatch = AlliesDiedThisMatch;
+	Snapshot.CardsPurchasedThisMatch = CardsPurchasedThisMatch;
+	Snapshot.CardsDrawnThisMatch = CardsDrawnThisMatch;
+	Snapshot.UnitsTransformedThisMatch = UnitsTransformedThisMatch;
+	Snapshot.FinishersSpawned = FinishersSpawned;
+	Snapshot.bRedPassiveUsedThisTurn = bRedPassiveUsedThisTurn;
+	Snapshot.bOrangePassiveUsedThisTurn = bOrangePassiveUsedThisTurn;
+	Snapshot.bGreenPassiveUsedThisTurn = bGreenPassiveUsedThisTurn;
+	Snapshot.bBluePassiveUsedThisTurn = bBluePassiveUsedThisTurn;
+	Snapshot.bPurplePassiveUsedThisTurn = bPurplePassiveUsedThisTurn;
+	Snapshot.NextUnitPlayDiscount = NextUnitPlayDiscount;
+	Snapshot.TransformsSucceededThisTurn = TransformsSucceededThisTurn;
+	return Snapshot;
+}
+
+void ACGPlayerState::RestoreFromSnapshot(const FCGPlayerStateSnapshot& Snapshot)
+{
+	CurrentHP = Snapshot.CurrentHP;
+	CurrentMana = Snapshot.CurrentMana;
+	PurchaseMana = Snapshot.PurchaseMana;
+	bIsDefeated = Snapshot.bIsDefeated;
+	HandCardIds = Snapshot.HandCardIds;
+	DeckCardIds = Snapshot.DeckCardIds;
+	DiscardCardIds = Snapshot.DiscardCardIds;
+	BoardUnits = Snapshot.BoardUnits;
+	CardsPlayedThisTurn = Snapshot.CardsPlayedThisTurn;
+	CardsPlayedThisMatch = Snapshot.CardsPlayedThisMatch;
+	SpellsPlayedThisTurn = Snapshot.SpellsPlayedThisTurn;
+	DrawsThisTurn = Snapshot.DrawsThisTurn;
+	bBoughtThisTurn = Snapshot.bBoughtThisTurn;
+	bAllySpellPingUsedThisTurn = Snapshot.bAllySpellPingUsedThisTurn;
+	bBuffBoardOnPurchaseThisTurn = Snapshot.bBuffBoardOnPurchaseThisTurn;
+	bAllPurchasesDiscountedThisTurn = Snapshot.bAllPurchasesDiscountedThisTurn;
+	AlliesDiedThisMatch = Snapshot.AlliesDiedThisMatch;
+	CardsPurchasedThisMatch = Snapshot.CardsPurchasedThisMatch;
+	CardsDrawnThisMatch = Snapshot.CardsDrawnThisMatch;
+	UnitsTransformedThisMatch = Snapshot.UnitsTransformedThisMatch;
+	FinishersSpawned = Snapshot.FinishersSpawned;
+	bRedPassiveUsedThisTurn = Snapshot.bRedPassiveUsedThisTurn;
+	bOrangePassiveUsedThisTurn = Snapshot.bOrangePassiveUsedThisTurn;
+	bGreenPassiveUsedThisTurn = Snapshot.bGreenPassiveUsedThisTurn;
+	bBluePassiveUsedThisTurn = Snapshot.bBluePassiveUsedThisTurn;
+	bPurplePassiveUsedThisTurn = Snapshot.bPurplePassiveUsedThisTurn;
+	NextUnitPlayDiscount = Snapshot.NextUnitPlayDiscount;
+	TransformsSucceededThisTurn = Snapshot.TransformsSucceededThisTurn;
+	SyncPublicCardCounts();
+}
+
 // カード効果ディスパッチ(docs/architecture.md「カード効果ディスパッチ」)。
 // 以前はResolveSpellEffect/ResolveUnitOnPlayEffectがEffectId文字列で分岐する
 // if/elseの塊で、カードが増えるほど際限なく伸びる作りだった。
@@ -125,7 +192,12 @@ namespace
 	void Handle_OnPlayDamageUnitTargetSpell(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
 		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // R05 黒鉄の抜き打ち(敵Unit限定、顔面は選べない)
 	{
-		if (!Opponent || !CGState)
+		// 「対象がない場合でもゲームの進行が不能にならないようにしてほしい」という
+		// フィードバックへの対応。敵Unit限定(顔面を選べない)効果は、敵の場が
+		// 空だと選択待ちに入ったまま誰も解決できずゲームが進行不能になるため、
+		// 他の敵Unit限定効果(B02のOnPlayDebuffTarget等)と同様に候補が無ければ
+		// 選択待ちに入らず何もしない。
+		if (!Opponent || !CGState || Opponent->BoardUnits.Num() == 0)
 		{
 			return;
 		}
@@ -768,7 +840,8 @@ namespace
 
 	void Handle_OnPlayDamageUnitTargetUnit(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState) // R10 灼熱の一番槍(敵Unit限定、顔面は選べない)
 	{
-		if (!Opponent || !CGState)
+		// Handle_OnPlayDamageUnitTargetSpell(R05)と同じ理由(進行不能対策)。
+		if (!Opponent || !CGState || Opponent->BoardUnits.Num() == 0)
 		{
 			return;
 		}

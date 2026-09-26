@@ -10,17 +10,17 @@
   必要は無い)。終了後、CardGame.logから`SimSummary`行を抽出して整形表示する。
 
 .PARAMETER Matches
-  シミュレーションする対戦数(既定3000)。
+  シミュレーションする対戦数(既定1000。docs/simulation-guide.md参照)。
 
 .PARAMETER DisableBuy
   マーケット購入を無効化する診断用フラグ(-SimDisableBuy)を付与する。
 
 .EXAMPLE
   ./scripts/run_simulation.ps1
-  ./scripts/run_simulation.ps1 -Matches 500
+  ./scripts/run_simulation.ps1 -Matches 3000
 #>
 param(
-    [int]$Matches = 3000,
+    [int]$Matches = 1000,
     [switch]$DisableBuy
 )
 

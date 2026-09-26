@@ -120,6 +120,20 @@ bool ACGPlayerController::ServerRequestEndTurn_Validate()
 	return true;
 }
 
+void ACGPlayerController::ServerRequestCancelChoice_Implementation()
+{
+	ACGPlayerState* MyState = GetPlayerState<ACGPlayerState>();
+	ACGGameMode* GameMode = GetWorld() ? GetWorld()->GetAuthGameMode<ACGGameMode>() : nullptr;
+	if (MyState && GameMode)
+	{
+		GameMode->RequestCancelChoice(MyState->SideIndex);
+	}
+}
+bool ACGPlayerController::ServerRequestCancelChoice_Validate()
+{
+	return true;
+}
+
 void ACGPlayerController::ServerResolveChoiceWithCard_Implementation(FName ChosenCardId)
 {
 	ACGPlayerState* MyState = GetPlayerState<ACGPlayerState>();
