@@ -75,6 +75,13 @@ namespace
 	// この高さは保つことで、ユニットの出入りでゾーンの高さがガクガク変わらないようにする。
 	const float BoardRowMinHeight = UCGCardSlotWidget::CardHeight * BoardDisplayScale + 8.f;
 
+	// 手札の行も場の行と同じ理由で最低高さを保証する(「手札がなくなったときに
+	// 枠が急に小さくなって画面のレイアウトが変わってしまう」というフィードバックへの
+	// 対応。以前は手札行だけAddCenteredRow(Auto)のままで、0枚になるとScrollBoxが
+	// 高さ0に潰れ、下のバー等が詰まって見えていた)。
+	const float SelfHandRowMinHeight = UCGCardSlotWidget::CardHeight * SelfHandDisplayScale + 8.f;
+	const float EnemyHandRowMinHeight = UCGCardSlotWidget::CardHeight * EnemyHandDisplayScale + 8.f;
+
 	const float CardGap = 6.f;
 
 	// カード枚数が増えても画面外へあふれないよう、各行を横スクロール可能にする。
@@ -215,24 +222,10 @@ namespace
 		}
 	}
 
-	// カードの行(横スクロール)は、枚数が少ないときに左端へ張り付かず、
-	// ゾーンの中央に寄るようにする(枚数が多くスクロールが必要な場合も動作に支障はない)。
-	void AddCenteredRow(UVerticalBox* Content, UScrollBox* ScrollBox, bool bGrow)
-	{
-		if (UVerticalBoxSlot* RowSlot = Content->AddChildToVerticalBox(ScrollBox))
-		{
-			RowSlot->SetHorizontalAlignment(HAlign_Center);
-			if (bGrow)
-			{
-				RowSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-			}
-		}
-	}
-
-	// 場の行専用: ユニットが0体でもカード1段分の高さを最低保証しつつ(体数の増減で
-	// ゾーンの高さがガクガク変わるのを防ぐ)、それ以上には伸ばさない(Fillにして
+	// 場/手札の行で共通: 中身が0枚でもカード1段分の高さを最低保証しつつ(枚数の
+	// 増減でゾーンの高さがガクガク変わるのを防ぐ)、それ以上には伸ばさない(Fillにして
 	// 残り高さを専有すると元の「余白だらけ」の状態に戻ってしまう)。
-	void AddBoardRow(UWidgetTree* WidgetTree, UVerticalBox* Content, UScrollBox* ScrollBox, float MinRowHeight)
+	void AddRowWithMinHeight(UWidgetTree* WidgetTree, UVerticalBox* Content, UScrollBox* ScrollBox, float MinRowHeight)
 	{
 		USizeBox* MinHeightBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
 		MinHeightBox->SetMinDesiredHeight(MinRowHeight);
@@ -538,6 +531,7 @@ void UCGGameHUD::EnsureWidgetTreeBuilt()
 		TargetFaceSlot->SetPadding(FMargin(16.f, 0.f, 16.f, 2.f));
 	}
 
+
 	// 墓地/山札スクライのように普段は画面に無いカードを選ぶときは、専用のポップアップを
 	// 画面の一番手前に表示して選ぶ(docs/architecture.md「選択待ち(PendingChoice)の仕組み」、
 	// 「墓地が見にくい」というフィードバックを受けて一時墓地ビューアーから移行)。
@@ -822,7 +816,7 @@ void UCGGameHUD::EnsureWidgetTreeBuilt()
 	UHorizontalBox* EnemyHandInner = nullptr;
 	UScrollBox* EnemyHandScroll = MakeScrollableRow(WidgetTree, TEXT("EnemyHandBox"), EnemyHandInner);
 	EnemyHandBox = EnemyHandInner;
-	AddCenteredRow(EnemyHandZone, EnemyHandScroll, /*bGrow=*/false);
+	AddRowWithMinHeight(WidgetTree, EnemyHandZone, EnemyHandScroll, EnemyHandRowMinHeight);
 	if (UVerticalBoxSlot* EnemyHandRowSlot = CenterColumn->AddChildToVerticalBox(EnemyHandPanel))
 	{
 		EnemyHandRowSlot->SetHorizontalAlignment(HAlign_Center);
@@ -837,7 +831,7 @@ void UCGGameHUD::EnsureWidgetTreeBuilt()
 	UHorizontalBox* EnemyBoardInner = nullptr;
 	UScrollBox* EnemyBoardScroll = MakeScrollableRow(WidgetTree, TEXT("EnemyBoardBox"), EnemyBoardInner);
 	EnemyBoardBox = EnemyBoardInner;
-	AddBoardRow(WidgetTree, BattlefieldZone, EnemyBoardScroll, BoardRowMinHeight);
+	AddRowWithMinHeight(WidgetTree, BattlefieldZone, EnemyBoardScroll, BoardRowMinHeight);
 
 	// 卓の中央線。敵陣/自陣の境目を、枠の中でさらに1本の細い線で示す
 	// (MTG Arenaの盤面に実際の仕切り線は無いが、対戦相手との境目が全く無いと
@@ -866,7 +860,7 @@ void UCGGameHUD::EnsureWidgetTreeBuilt()
 	UHorizontalBox* SelfBoardInner = nullptr;
 	UScrollBox* SelfBoardScroll = MakeScrollableRow(WidgetTree, TEXT("SelfBoardBox"), SelfBoardInner);
 	SelfBoardBox = SelfBoardInner;
-	AddBoardRow(WidgetTree, BattlefieldZone, SelfBoardScroll, BoardRowMinHeight);
+	AddRowWithMinHeight(WidgetTree, BattlefieldZone, SelfBoardScroll, BoardRowMinHeight);
 
 	if (UVerticalBoxSlot* BattlefieldRowSlot = CenterColumn->AddChildToVerticalBox(BattlefieldPanel))
 	{
@@ -885,7 +879,7 @@ void UCGGameHUD::EnsureWidgetTreeBuilt()
 	UHorizontalBox* SelfHandInner = nullptr;
 	UScrollBox* SelfHandScroll = MakeScrollableRow(WidgetTree, TEXT("HandBox"), SelfHandInner);
 	HandBox = SelfHandInner;
-	AddCenteredRow(SelfHandZone, SelfHandScroll, /*bGrow=*/false);
+	AddRowWithMinHeight(WidgetTree, SelfHandZone, SelfHandScroll, SelfHandRowMinHeight);
 	if (UVerticalBoxSlot* SelfHandRowSlot = CenterColumn->AddChildToVerticalBox(SelfHandPanel))
 	{
 		SelfHandRowSlot->SetHorizontalAlignment(HAlign_Center);
@@ -1107,6 +1101,26 @@ void UCGGameHUD::EnsureWidgetTreeBuilt()
 			GlowSlot->SetVerticalAlignment(VAlign_Bottom);
 			GlowSlot->SetPadding(FMargin(0.f, 0.f, 0.f, -500.f));
 		}
+	}
+
+	// 選択待ち中(人間側)に有効化する、画面全体を覆う半透明の暗転スクリム兼
+	// クリックキャッチャー。「効果選択画面は画面全体を暗くして選択できるカードや
+	// プレイヤーだけを明るくしてほしい。選択できない場所をタップしたらキャンセル
+	// 扱いにしてほしい」というフィードバックへの対応。Root(この下のAddChildToOverlay
+	// で手前に重ねる、盤面/手札/「顔面を狙う」ボタン等の実際の操作対象)より奥に
+	// 置くことで、対象を選べる場所(や上記の各Populate*で選べないと判定された
+	// スロット=HitTestInvisible)へのクリックは素通りし、本当に「関係ない場所」
+	// へのクリックだけがここまで届いてキャンセルになる(RefreshUI側で
+	// Visibility::Visible/Collapsedを切り替える。Collapsed中はヒットテストにも
+	// 掛からず、暗転もしない)。
+	ChoiceCancelClickCatcher = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), TEXT("ChoiceCancelClickCatcher"));
+	ApplyStyledButtonLook(ChoiceCancelClickCatcher, FLinearColor(0.f, 0.f, 0.f, 0.72f), /*Radius=*/0.f);
+	ChoiceCancelClickCatcher->OnClicked.AddDynamic(this, &UCGGameHUD::HandleCancelChoiceClicked);
+	ChoiceCancelClickCatcher->SetVisibility(ESlateVisibility::Collapsed);
+	if (UOverlaySlot* ChoiceCancelSlot = ContentWithBackground->AddChildToOverlay(ChoiceCancelClickCatcher))
+	{
+		ChoiceCancelSlot->SetHorizontalAlignment(HAlign_Fill);
+		ChoiceCancelSlot->SetVerticalAlignment(VAlign_Fill);
 	}
 
 	if (UOverlaySlot* ContentSlot = ContentWithBackground->AddChildToOverlay(Root))
@@ -1334,6 +1348,17 @@ void UCGGameHUD::RefreshUI()
 		&& !EnemySide->HasGuardUnit();
 	TargetFaceButton->SetVisibility(bShowTargetFace ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 
+	// 選択待ち中は常に画面を暗転させ、関係ない場所へのクリックはキャンセル扱いにする
+	// (「効果選択画面は画面全体を暗くして選択できるカードやプレイヤーだけを
+	// 明るくしてほしい。選択できない場所をタップしたらキャンセル扱いにしてほしい」
+	// というフィードバックへの対応)。キャンセルできない選択(B15の2体目選択等、
+	// FCGPendingChoice::bCancellable=false)のときは、クリックしても
+	// ACGGameMode::RequestCancelChoice側で何も起きない(安全に無視される)ため、
+	// 暗転自体は常に出してよい。クリックキャッチャーはRootより奥にあるため、
+	// 盤面/手札/「顔面を狙う」ボタン等の実際の操作対象へのクリックはそちら側が
+	// 先に消費し、それ以外の場所だけがここに素通りする。
+	ChoiceCancelClickCatcher->SetVisibility(bHumanIsChoosing ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+
 	ScryBox->SetVisibility(bShowScry ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	if (bShowScry)
 	{
@@ -1494,12 +1519,21 @@ void UCGGameHUD::PopulateBuyDestinationViewer(FName CardId)
 void UCGGameHUD::PopulateFaceDownHandRow(UHorizontalBox* Box, int32 CardCount, float DisplayScale)
 {
 	Box->ClearChildren();
+
+	// 「自分と相手の手札が明るいと思います」というフィードバックへの対応。相手の
+	// 手札は非公開情報であり、いかなる選択待ちの対象にもなり得ないため、選択待ち中は
+	// 常に暗くする(元々クリック不可のためHitTestInvisibleにする必要は無い)。
+	ACGGameState* CGState = GetWorld() ? GetWorld()->GetGameState<ACGGameState>() : nullptr;
+	const bool bDimHand = CGState && CGState->PendingChoice.IsActive()
+		&& CGState->PendingChoice.SideIndex == GetMySideIndex();
+
 	for (int32 i = 0; i < CardCount; ++i)
 	{
 		UCGCardSlotWidget* FaceDownCard = CreateWidget<UCGCardSlotWidget>(GetWorld(), UCGCardSlotWidget::StaticClass());
 		FaceDownCard->SlotIndex = -1;
 		FaceDownCard->SetFaceDown();
 		RegisterCardHoverPreview(FaceDownCard);
+		FaceDownCard->SetRenderOpacity(bDimHand ? 0.25f : 1.f);
 		UWidget* RowChild = UCGCardSlotWidget::WrapForCompactDisplay(WidgetTree, FaceDownCard, DisplayScale);
 		if (UHorizontalBoxSlot* CardSlot = Box->AddChildToHorizontalBox(RowChild))
 		{
@@ -1519,6 +1553,21 @@ void UCGGameHUD::PopulateMarketColumn(UWrapBox* Box, const TArray<FCGMarketSlot>
 	// 見た目だけ「今は買えない」と分かるようにする)。
 	const int32 SelfDiscount = SelfSide ? SelfSide->ComputeCurrentPurchaseDiscount() : 0;
 	const int32 SelfAffordable = SelfSide ? SelfSide->CurrentMana + SelfSide->PurchaseMana : 0;
+
+	// マーケットから1枚選ぶ選択待ち(MarketCard/MarketSlotTarget)の間は、通常の
+	// 「買えるかどうか」ではなく実際の選択条件で薄く・クリック不可にする
+	// (「効果選択画面は選択できるカードだけを明るくしてほしい」というフィード
+	// バックへの対応。以前はMarketCard選択待ち中でも通常の予算判定のまま
+	// 薄くしており、実際に選べるかどうかと表示が食い違っていた)。
+	ACGGameState* CGState = GetWorld() ? GetWorld()->GetGameState<ACGGameState>() : nullptr;
+	const bool bMarketCardChoiceActive = CGState
+		&& CGState->PendingChoice.ChoiceType == ECGChoiceType::MarketCard
+		&& CGState->PendingChoice.SideIndex == CGState->CurrentTurnPlayerIndex;
+	const bool bMarketSlotTargetActive = CGState
+		&& CGState->PendingChoice.ChoiceType == ECGChoiceType::MarketSlotTarget
+		&& CGState->PendingChoice.SideIndex == CGState->CurrentTurnPlayerIndex;
+	const bool bAnyMarketChoiceActive = bMarketCardChoiceActive || bMarketSlotTargetActive;
+
 	for (int32 i = 0; i < Slots.Num(); ++i)
 	{
 		// 出どころの山札・捨て札とも尽きて空になっている枠は表示しない
@@ -1535,9 +1584,34 @@ void UCGGameHUD::PopulateMarketColumn(UWrapBox* Box, const TArray<FCGMarketSlot>
 		SlotWidget->SlotIndex = i;
 		SlotWidget->SetCardData(Def);
 		RegisterCardHoverPreview(SlotWidget);
-		SlotWidget->OnSlotClicked.AddDynamic(this, &UCGGameHUD::HandleMarketSlotClicked);
 		const int32 EffectiveCost = FMath::Max(0, Def.Cost - SelfDiscount);
-		SlotWidget->SetRenderOpacity(EffectiveCost <= SelfAffordable ? 1.f : 0.4f);
+		if (bAnyMarketChoiceActive)
+		{
+			// MarketSlotTarget(橙O04)はどの枠でも選べる(ACGGameMode::
+			// ResolvePendingChoiceMarketSlotTarget参照)ため常にbEligible=trueのまま。
+			bool bEligible = true;
+			if (bMarketCardChoiceActive)
+			{
+				const FCGPendingChoice& Choice = CGState->PendingChoice;
+				const bool bDeployToBoard = Choice.EffectId == FName(CGEffectId::OnPlayDeployFromMarketFree);
+				bEligible = (Choice.MaxCost < 0 || Def.Cost <= Choice.MaxCost)
+					&& (bDeployToBoard ? Def.CardType == ECGCardType::Unit : (!SelfSide || SelfSide->HandCardIds.Num() < 10));
+			}
+			SlotWidget->SetRenderOpacity(bEligible ? 1.f : 0.2f);
+			SlotWidget->SetVisibility(bEligible ? ESlateVisibility::Visible : ESlateVisibility::HitTestInvisible);
+			if (bEligible)
+			{
+				SlotWidget->OnSlotClicked.AddDynamic(this, &UCGGameHUD::HandleMarketSlotClicked);
+			}
+		}
+		else
+		{
+			// 選択待ちでない通常の購入フェーズ: 買えない枠も薄く表示するだけでクリックは
+			// 禁止しない(RequestBuyCard側で従来通り拒否される。「マーケットの買えない
+			// カードを分かりやすくしてほしい」というフィードバックへの対応)。
+			SlotWidget->SetRenderOpacity(EffectiveCost <= SelfAffordable ? 1.f : 0.4f);
+			SlotWidget->OnSlotClicked.AddDynamic(this, &UCGGameHUD::HandleMarketSlotClicked);
+		}
 		UWidget* WrapChild = UCGCardSlotWidget::WrapForCompactDisplay(WidgetTree, SlotWidget, DisplayScale);
 
 		// マーケットの出どころ表示(次期ルール、docs/next-ruleset-design.md
@@ -1621,7 +1695,12 @@ void UCGGameHUD::PopulateBoardRow(UHorizontalBox* Box, ACGPlayerState* Side, boo
 		const bool bAllyEligible = !bAllyTargetChoiceActive
 			|| CGState->PendingChoice.EffectId != FName(CGEffectId::OnPlayForceTransformAllyTarget)
 			|| Side->CanUnitTransform(i);
-		const bool bClickable = (bAllyTargetChoiceActive && bAllyEligible) || bCanAttack;
+		// 対象指定の味方強化の選択待ち中は、選択待ちでない間の「攻撃可能かどうか」を
+		// 混ぜない(選択待ち中はRequestAttack自体が拒否されるため、攻撃できることは
+		// クリック可能である理由にならない。「選択できない場所は薄く・クリック不可に
+		// してほしい」というフィードバックへの対応で、P16の対象外ユニットが
+		// 誤って明るいまま残っていた不具合を修正)。
+		const bool bClickable = bAllyTargetChoiceActive ? bAllyEligible : bCanAttack;
 
 		UCGCardSlotWidget* SlotWidget = CreateWidget<UCGCardSlotWidget>(GetWorld(), UCGCardSlotWidget::StaticClass());
 		SlotWidget->SlotIndex = i;
@@ -1632,9 +1711,15 @@ void UCGGameHUD::PopulateBoardRow(UHorizontalBox* Box, ACGPlayerState* Side, boo
 		RegisterCardHoverPreview(SlotWidget);
 		if (bIsSelfSide)
 		{
-			// カードの情報自体は変えず、今は攻撃できないユニットを少し暗くするだけに留める
-			// (文字での注記はどの画面でも同じ情報を表示するという方針にそぐわないため)。
-			SlotWidget->SetRenderOpacity(bClickable ? 1.f : 0.5f);
+			// 「効果選択画面は画面全体を暗くして選択できるカードやプレイヤーだけを
+			// 明るくしてほしい。選択できない場所をクリックしたらキャンセル扱いに
+			// してほしい」というフィードバックへの対応。選べないユニットは大きく
+			// 暗くした上でHitTestInvisibleにし、クリックがこのスロットで
+			// 消費されず奥のChoiceCancelClickCatcherまで素通りしてキャンセルになる
+			// ようにする(以前は単にクリック判定を外すだけで、クリックしても
+			// 何も起きなかった)。
+			SlotWidget->SetRenderOpacity(bClickable ? 1.f : 0.25f);
+			SlotWidget->SetVisibility(bClickable ? ESlateVisibility::Visible : ESlateVisibility::HitTestInvisible);
 			if (bClickable)
 			{
 				SlotWidget->OnSlotClicked.AddDynamic(this, &UCGGameHUD::HandleBoardSlotClicked);
@@ -1671,8 +1756,12 @@ void UCGGameHUD::PopulateBoardRow(UHorizontalBox* Box, ACGPlayerState* Side, boo
 			}
 
 			const bool bAnyEnemyChoiceActive = bEnemyOrFaceActive || bEnemyUnitTargetActive;
-			SlotWidget->SetRenderOpacity((!bAnyEnemyChoiceActive || bEnemyEligible) ? 1.f : 0.35f);
-			if (!bAnyEnemyChoiceActive || bEnemyEligible)
+			const bool bEnemySlotClickable = !bAnyEnemyChoiceActive || bEnemyEligible;
+			// 上のSelf側と同じ理由(画面を暗くし、選べない場所のクリックはキャンセル
+			// 扱いにする)でHitTestInvisibleにする。
+			SlotWidget->SetRenderOpacity(bEnemySlotClickable ? 1.f : 0.2f);
+			SlotWidget->SetVisibility(bEnemySlotClickable ? ESlateVisibility::Visible : ESlateVisibility::HitTestInvisible);
+			if (bEnemySlotClickable)
 			{
 				SlotWidget->OnSlotClicked.AddDynamic(this, &UCGGameHUD::HandleEnemyBoardSlotClicked);
 			}
@@ -1995,6 +2084,18 @@ void UCGGameHUD::TickResultAnimation(float DeltaTime)
 void UCGGameHUD::PopulateCardRow(UHorizontalBox* Box, const TArray<FName>& CardIds, float DisplayScale, FName ClickHandlerName)
 {
 	Box->ClearChildren();
+
+	// 「自分と相手の手札が明るいと思います」というフィードバックへの対応。
+	// HandCard以外の選択待ち中は、手札をクリックしても何も起きない
+	// (ACGGameMode::RequestPlayCardは選択待ち中は拒否する)ため、選べない場所として
+	// 暗くし、クリックが素通りしてキャンセル扱いになるようにする。HandCard選択待ち
+	// (捨てるカードを選ぶ等)のときは、どのカードも選べる(ACGPlayerState::
+	// DiscardSpecificFromHand参照)ため今まで通り明るいまま・クリック可能にする。
+	ACGGameState* CGState = GetWorld() ? GetWorld()->GetGameState<ACGGameState>() : nullptr;
+	const bool bHumanIsChoosing = CGState && CGState->PendingChoice.IsActive()
+		&& CGState->PendingChoice.SideIndex == GetMySideIndex();
+	const bool bDimHand = bHumanIsChoosing && CGState->PendingChoice.ChoiceType != ECGChoiceType::HandCard;
+
 	for (int32 i = 0; i < CardIds.Num(); ++i)
 	{
 		FCGCardDef Def;
@@ -2003,11 +2104,16 @@ void UCGGameHUD::PopulateCardRow(UHorizontalBox* Box, const TArray<FName>& CardI
 		SlotWidget->SlotIndex = i;
 		SlotWidget->SetCardData(Def);
 		RegisterCardHoverPreview(SlotWidget);
-		// マーケット/手札はクリック時の処理だけが違うため、関数名指定で動的にバインドしている
-		// (AddDynamicはコンパイル時に関数を1つに固定するマクロのため、ここでは使えない)。
-		FScriptDelegate ClickDelegate;
-		ClickDelegate.BindUFunction(this, ClickHandlerName);
-		SlotWidget->OnSlotClicked.Add(ClickDelegate);
+		SlotWidget->SetRenderOpacity(bDimHand ? 0.25f : 1.f);
+		SlotWidget->SetVisibility(bDimHand ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Visible);
+		if (!bDimHand)
+		{
+			// マーケット/手札はクリック時の処理だけが違うため、関数名指定で動的にバインドしている
+			// (AddDynamicはコンパイル時に関数を1つに固定するマクロのため、ここでは使えない)。
+			FScriptDelegate ClickDelegate;
+			ClickDelegate.BindUFunction(this, ClickHandlerName);
+			SlotWidget->OnSlotClicked.Add(ClickDelegate);
+		}
 		UWidget* RowChild = UCGCardSlotWidget::WrapForCompactDisplay(WidgetTree, SlotWidget, DisplayScale);
 		if (UHorizontalBoxSlot* CardSlot = Box->AddChildToHorizontalBox(RowChild))
 		{
@@ -2206,6 +2312,23 @@ void UCGGameHUD::HandleTargetFaceClicked()
 		return;
 	}
 	PC->ServerResolveChoiceWithTarget(-1);
+	RefreshUI();
+}
+
+void UCGGameHUD::HandleCancelChoiceClicked()
+{
+	ACGGameMode* GameMode;
+	ACGGameState* CGState;
+	if (!TryGetGameModeAndState(GameMode, CGState))
+	{
+		return;
+	}
+	ACGPlayerController* PC = GetCGPlayerController();
+	if (!PC)
+	{
+		return;
+	}
+	PC->ServerRequestCancelChoice();
 	RefreshUI();
 }
 

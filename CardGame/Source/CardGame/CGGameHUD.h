@@ -216,6 +216,16 @@ protected:
 	UPROPERTY()
 	TObjectPtr<UButton> TargetFaceButton;
 
+	// 選択待ちがキャンセル可能(FCGPendingChoice::bCancellable)なときだけ有効化する、
+	// 画面全体を覆う透明なクリックキャッチャー。「取りやめるボタンでなく、画面の
+	// 関係ないところをタップしたら選択をやめるようにしてほしい」というフィード
+	// バックへの対応。ResultClickCatcherと同じ考え方だが、Root(盤面・手札等の
+	// 実際の操作対象)より手前ではなく奥に置くことで、実際に対象を選べる場所への
+	// クリックはそちらが先に消費し、それ以外の「関係ない場所」への クリックだけが
+	// ここまで素通りしてキャンセルになる(EnsureWidgetTreeBuilt参照)。
+	UPROPERTY()
+	TObjectPtr<UButton> ChoiceCancelClickCatcher;
+
 	// KeepOrBury選択待ち中に表示する2択ボタン。
 	UPROPERTY()
 	TObjectPtr<UButton> KeepOnTopButton;
@@ -248,6 +258,9 @@ protected:
 
 	UFUNCTION()
 	void HandleTargetFaceClicked();
+
+	UFUNCTION()
+	void HandleCancelChoiceClicked();
 
 	UFUNCTION()
 	void HandleKeepOnTopClicked();

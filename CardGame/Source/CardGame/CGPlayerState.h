@@ -221,6 +221,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CardGame")
 	bool PlayCardFromHand(FName CardId, ACGPlayerState* Opponent, int32 TargetUnitIndex, ACGGameState* CGState = nullptr);
 
+	// 「対象を選ぶ操作を取りやめて戻れるようにしてほしい」というフィードバックへの
+	// 対応。ACGGameMode::RequestPlayCardが、カードプレイ直前にこの2関数で状態を
+	// 保存・復元する(FCGPendingChoice::bCancellable、FCGPlayerStateSnapshot参照)。
+	// FCGPlayerStateSnapshotはBlueprintTypeではないため、通常のC++メンバー関数
+	// (UFUNCTIONにしない)として公開する。
+	FCGPlayerStateSnapshot CaptureSnapshot() const;
+
+	void RestoreFromSnapshot(const FCGPlayerStateSnapshot& Snapshot);
+
 	// 手札から出したUnitを実際に場へ追加し、登場時効果まで解決する
 	// (PlayCardFromHand()から切り出した共通処理)。生け贄(Sacrifice)持ちの
 	// Unitは、生け贄選択(AllyUnitTarget選択待ち)が解決してから

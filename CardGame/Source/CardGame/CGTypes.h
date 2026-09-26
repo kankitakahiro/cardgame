@@ -447,7 +447,114 @@ struct FCGPendingChoice
 	UPROPERTY(BlueprintReadOnly, Category = "CardGame")
 	int32 RemainingRepeats = 0;
 
+	// この選択をキャンセルして手前の状態へ戻れるか。「対象を選ぶ操作を取りやめて
+	// 戻れるようにしてほしい。カードを完全にプレイした/攻撃を完了した後は戻れない」
+	// というフィードバックへの対応。攻撃対象選択(EffectId==AttackTarget)と、
+	// カードプレイ直後にプレイヤー自身が新たに開始した対象選択(Spell/Unit登場時の
+	// 対象・生け贄の対象)だけがtrueになる。B15の2体目選択やFIN_ORANGEの連続選択、
+	// ターン終了時/購入時の選択等、既に前段が確定済みの選択はfalseのまま
+	// (ACGGameMode::RequestCancelChoice、RequestAttack、RequestPlayCard参照)。
+	UPROPERTY(BlueprintReadOnly, Category = "CardGame")
+	bool bCancellable = false;
+
 	bool IsActive() const { return ChoiceType != ECGChoiceType::None; }
+};
+
+// 「対象を選ぶ操作を取りやめて戻れるようにしてほしい」というフィードバックへの
+// 対応。カードプレイの結果、人間の対象選択待ち(FCGPendingChoice::bCancellable)が
+// 残った場合に、そのカードプレイ直前の両陣営の状態を丸ごと保存しておき、
+// キャンセル時に丸ごと復元する(ACGGameMode::RequestPlayCard/RequestCancelChoice
+// 参照)。個々の副作用(手札除去・マナ消費・パッシブ・分身・変貌・死亡処理・
+// フィニッシャー召喚等)を1つずつ逆操作するのではなく、関係する全フィールドを
+// 値ごとコピーして丸ごと戻すことで、新しい副作用が増えても取り漏らしにくくしている。
+USTRUCT()
+struct FCGPlayerStateSnapshot
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	int32 CurrentHP = 0;
+
+	UPROPERTY()
+	int32 CurrentMana = 0;
+
+	UPROPERTY()
+	int32 PurchaseMana = 0;
+
+	UPROPERTY()
+	bool bIsDefeated = false;
+
+	UPROPERTY()
+	TArray<FName> HandCardIds;
+
+	UPROPERTY()
+	TArray<FName> DeckCardIds;
+
+	UPROPERTY()
+	TArray<FName> DiscardCardIds;
+
+	UPROPERTY()
+	TArray<FCGBoardUnit> BoardUnits;
+
+	UPROPERTY()
+	int32 CardsPlayedThisTurn = 0;
+
+	UPROPERTY()
+	TArray<FName> CardsPlayedThisMatch;
+
+	UPROPERTY()
+	int32 SpellsPlayedThisTurn = 0;
+
+	UPROPERTY()
+	int32 DrawsThisTurn = 0;
+
+	UPROPERTY()
+	bool bBoughtThisTurn = false;
+
+	UPROPERTY()
+	bool bAllySpellPingUsedThisTurn = false;
+
+	UPROPERTY()
+	bool bBuffBoardOnPurchaseThisTurn = false;
+
+	UPROPERTY()
+	bool bAllPurchasesDiscountedThisTurn = false;
+
+	UPROPERTY()
+	int32 AlliesDiedThisMatch = 0;
+
+	UPROPERTY()
+	int32 CardsPurchasedThisMatch = 0;
+
+	UPROPERTY()
+	int32 CardsDrawnThisMatch = 0;
+
+	UPROPERTY()
+	int32 UnitsTransformedThisMatch = 0;
+
+	UPROPERTY()
+	TArray<ECGColor> FinishersSpawned;
+
+	UPROPERTY()
+	bool bRedPassiveUsedThisTurn = false;
+
+	UPROPERTY()
+	bool bOrangePassiveUsedThisTurn = false;
+
+	UPROPERTY()
+	bool bGreenPassiveUsedThisTurn = false;
+
+	UPROPERTY()
+	bool bBluePassiveUsedThisTurn = false;
+
+	UPROPERTY()
+	bool bPurplePassiveUsedThisTurn = false;
+
+	UPROPERTY()
+	int32 NextUnitPlayDiscount = 0;
+
+	UPROPERTY()
+	int32 TransformsSucceededThisTurn = 0;
 };
 
 // FCGCardDef::EffectId に入る値の一覧。以前は FName(TEXT("...")) のリテラルが
