@@ -141,7 +141,7 @@ UE標準のClient-Server構成+Actorレプリケーションを使う。マッ�
 | `ResolvePendingChoiceWithTarget(SideIndex, ChosenUnitIndex)` | `ServerResolveChoiceWithTarget(ChosenUnitIndex)` | 攻撃対象選択(-1=顔面) |
 | `ResolvePendingChoiceKeepOrBury(SideIndex, bKeepOnTop)` | `ServerResolveChoiceKeepOrBury(bKeepOnTop)` | 山札トップ保持/送り選択 |
 | `ResolvePendingChoiceBuyDestination(SideIndex, bToHand)` | `ServerResolveChoiceBuyDestination(bToHand)` | 購入先選択 |
-| `ResolvePendingChoiceSealTarget(SideIndex, ChosenUnitIndex)` | `ServerResolveChoiceSealTarget(ChosenUnitIndex)` | 封印/デバフ対象選択 |
+| `ResolvePendingChoiceSealTarget(SideIndex, ChosenUnitIndex)` | `ServerResolveChoiceSealTarget(ChosenUnitIndex)` | 断罪/デバフ対象選択 |
 | `ResolvePendingChoiceAllyTarget(SideIndex, ChosenUnitIndex)` | `ServerResolveChoiceAllyTarget(ChosenUnitIndex)` | 味方強化対象選択 |
 
 各RPCは`UFUNCTION(Server, Reliable, WithValidation)`で宣言し、実装は次の

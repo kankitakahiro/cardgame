@@ -5,30 +5,50 @@
 毎回コマンドを再構築しなくて済むよう、このドキュメントに手順をまとめておく。
 実装は`ACGGameMode::RunSelfPlaySimulation()`(`CGGameMode.cpp`)。
 
-## 実行コマンド
+シミュレーションが完了すると`RunSelfPlaySimulation()`が
+`FPlatformMisc::RequestExit()`でエンジンを自動終了させるため、GUIを手動で
+閉じる必要は無い。プロセスの終了を待ってからログを集計すればよい。
+
+## 実行コマンド(推奨: スクリプト経由)
 
 ```bash
-# 1. 前回のログが残っていると新しい結果と混ざって読みにくいので、先に削除する
+pwsh -File "C:/Users/kanki/Documents/app-develop/game/cardgame/scripts/run_simulation.ps1" -Matches 3000
+```
+
+`scripts/run_simulation.ps1`が以下を自動で行う。
+
+1. 前回のログ(`CardGame/Saved/Logs/CardGame.log`)を削除する。
+2. UnrealEditor.exeを`-SimulateMatches=N -game -log`で起動する
+   (`-Wait`でプロセスの終了を同期的に待つ)。
+3. シミュレーション完了時にUE側がエンジン終了を要求するので、プロセスが
+   終了し次第、`SimSummary`行を自動抽出して整形表示する。
+
+オプション:
+
+- `-Matches <N>`: 対戦数(既定3000)。軽い確認は500、カードごとの勝率
+  (下記CardStatsの母数が20試合以上必要)まで見たい/色の相性まで見たいときは3000。
+- `-DisableBuy`: マーケット購入を無効化する診断用フラグ(`-SimDisableBuy`)を付与する。
+
+## 手動で実行する場合
+
+スクリプトを使わず直接起動することもできる。この場合もシミュレーション
+完了時にエンジンが自動終了するため、待機後にログをそのまま`grep`できる。
+
+```bash
 rm -f "C:/Users/kanki/Documents/app-develop/game/cardgame/CardGame/Saved/Logs/CardGame.log"
 
-# 2. ビルド済みのUnrealEditor.exeを-gameモードで起動し、指定回数の自己対戦を
-#    同期的に実行させる(GUIは実質使わないが-windowedを付けないと起動に失敗する
-#    環境がある)。数百戦なら数秒〜数十秒、3000戦でも数分程度で完了する。
 "/c/Program Files/Epic Games/UE_5.8/Engine/Binaries/Win64/UnrealEditor.exe" \
   "C:/Users/kanki/Documents/app-develop/game/cardgame/CardGame/CardGame.uproject" \
   L_Card_GamePrototype -game -windowed -resX=800 -resY=600 \
   -SimulateMatches=3000 -log
 ```
 
-- `-SimulateMatches=N`: N戦のAI対AI(基本単色デッキ同士、色はランダムに毎回選び直す)を実行する。
-- 目安: 軽い確認は500戦、カードごとの勝率(下記CardStatsの母数が20試合以上必要)まで
-  しっかり見たい/色の相性まで見たいときは3000戦にする。
-- `-SimDisableBuy`: マーケット購入を無効化する診断用フラグ(通常は付けない)。
-- 実行後、コマンド自体はすぐ制御を返さずゲームプロセスが起動したままになることがある。
-  次にビルドし直す前に、そのプロセスが完全に終了しているか確認すること
-  (`tasklist //FI "IMAGENAME eq UnrealEditor.exe"`)。残っていると次のビルドが
-  `Unable to build while Live Coding is active` で失敗するので、その場合は
-  `taskkill //F //PID <PID>` で終了させてからビルドし直す。
+- 起動元のシェルは、上記コマンドがエンジンの終了(自動)まで制御を返さない
+  同期実行になる。数百戦なら数秒〜数十秒、3000戦でも数分程度で完了する。
+- ビルドし直す前に、プロセスが完全に終了しているか一応確認すること
+  (`tasklist //FI "IMAGENAME eq UnrealEditor.exe"`)。万一残っていると次の
+  ビルドが`Unable to build while Live Coding is active`で失敗するので、
+  その場合は`taskkill //F //PID <PID>`で終了させてからビルドし直す。
 
 ## ログの読み方(`CardGame/Saved/Logs/CardGame.log`)
 
@@ -77,7 +97,7 @@ SimSummary   Red vs Green: 140-110
 
 ```
 SimSummary CardStats Color=ECGColor::Green (プレイした試合の勝率、20試合以上のみ、強い順)
-SimSummary   G14(大地の祝福): PlayedGames=68 WinRate=66.2%
+SimSummary   G14(世界樹の加護): PlayedGames=68 WinRate=66.2%
 ...
 ```
 
@@ -112,3 +132,83 @@ SimSummary   G14(大地の祝福): PlayedGames=68 WinRate=66.2%
 - 引き分けは100ターンで打ち切った試合(`ACGGameMode::StartTurn`の安全装置)。
   引き分けが多い場合はどこかで手が止まっている可能性があるため、
   `SimMatch`行を`grep`して該当試合の直前ログを追う。
+
+## デッキ構築の最適化(-OptimizeDecks)
+
+上記のシミュレーションは`GetBasicColorDeckCardIds()`の固定デッキ(1色5種類を
+3枚・残り10種類を1枚)を前提にした検証だが、そのデッキ自体が各色にとって
+本当に最適かどうかは別問題。`ACGGameMode::RunDeckOptimization()`
+(`CGGameMode.cpp`)は、色ごとに「今のベストデッキから1枚だけ別のカードに
+入れ替える」山登り法(hill climbing)でデッキ構成そのものを探索する。
+
+### 仕組み
+
+1. 各色の探索の起点は`GetBasicColorDeckCardIds()`の現行デッキ。
+2. 1色につき、現在のベストデッキを他4色の「現時点のベストデッキ」と
+   総当たりでMatchesPerEvaluation回対戦させ、勝率を計測する。
+3. デッキから1枚をランダムに抜き、同じ色の別カードに差し替えた候補デッキを
+   作り、同じ方法で評価する(同名カード3枚までの制約は守る)。
+4. 候補の勝率が現在のベストを上回っていれば採用し、そうでなければ捨てる。
+   これをIterationsPerColor回繰り返す。
+5. 赤→橙→緑→青→紫の順に2〜4を行うのを1ラウンドとし、Rounds回繰り返す。
+   対戦相手のデッキも毎ラウンド更新されていくため、5色のデッキが互いに
+   適応し合いながら同時に育っていく。
+
+完了すると、色ごとに「ベースライン(元のGetBasicColorDeckCardIds)の勝率」
+「最終デッキの勝率」「その差分」と、最終デッキの構成(カードIdごとの採用枚数)
+をログへ出力し、`RunSelfPlaySimulation()`と同様にエンジンを自動終了する。
+
+### 実行コマンド
+
+```bash
+pwsh -File "C:/Users/kanki/Documents/app-develop/game/cardgame/scripts/run_deck_optimization.ps1" -IterationsPerColor 30 -MatchesPerEvaluation 200 -Rounds 3
+```
+
+オプション:
+
+- `-IterationsPerColor <N>`: 1色・1ラウンドあたりの入れ替え試行回数(既定30)。
+- `-MatchesPerEvaluation <N>`: デッキ1つを評価するときの対戦数(既定200)。
+  少ないと結果がノイジーになる(下記「数値の目安」参照)。
+- `-Rounds <N>`: 5色を何周探索するか(既定3)。
+
+手動起動する場合は`-SimulateMatches=N`の代わりに
+`-OptimizeDecks=<IterationsPerColor> -OptimizeDeckMatches=<MatchesPerEvaluation> -OptimizeDeckRounds=<Rounds>`
+を渡す(`-OptimizeDeckMatches`/`-OptimizeDeckRounds`省略時はそれぞれ200/3)。
+
+### ログの読み方
+
+```
+=== DeckOptimization: 3 round(s), 30 iteration(s)/color/round, 200 match(es)/evaluation ===
+DeckOptimization Round=1 Color=ECGColor::Red start WinRate=48.5%
+DeckOptimization Round=1 Color=ECGColor::Red Iter=1/30 WinRate=52.0% -> accepted (was 48.5%)
+DeckOptimization Round=1 Color=ECGColor::Red Iter=2/30 WinRate=46.0% -> rejected (best 52.0%)
+...
+=== DeckOptimization: final decks ===
+DeckOptimization Result Color=ECGColor::Red BaselineWinRate=48.5% FinalWinRate=58.0% Delta=+9.5%
+DeckOptimization   R01(黒鉄拾いの悪童) x3
+DeckOptimization   R07(疾風の抜き手) x3
+...
+```
+
+抽出コマンド:
+```bash
+grep "DeckOptimization Result" CardGame.log            # 色ごとの最終勝率・改善幅のみ
+grep -A16 "DeckOptimization Result Color=ECGColor::Red" CardGame.log  # 赤の最終デッキ構成まで含めて見る
+```
+
+### 数値の目安・注意点
+
+- `MatchesPerEvaluation`が小さい(数十戦程度)と1回の評価のノイズが大きく、
+  「たまたま勝率が高く出ただけ」の入れ替えを採用してしまいやすい。実際に
+  デッキ構成を見直す判断材料にするなら200戦以上を推奨(既定値)。
+- 対戦相手側のデッキもラウンドをまたいで更新され続けるため、`Delta`が
+  マイナスになることもある(評価時点でたまたま相手側が強くなっていた等)。
+  1回の実行結果だけで判断せず、複数回実行するか`Rounds`を増やして傾向を見る。
+  `-SimulateMatches`による通常のバランス検証と同様、最終的な採否は
+  `GetBasicColorDeckCardIds()`側を手動で書き換えてから改めてシミュレーション
+  (`-SimulateMatches`)で確認すること(このコマンドはデッキを自動では
+  書き換えない、あくまで探索・提案のみ)。
+- 探索は色内のカードだけを入れ替える(無色カードは対象外)ため、色の基礎性能
+  そのものが弱い場合(紫など)は、デッキ構築の最適化だけでは埋まらない
+  ギャップが残ることがある。その場合はカード単位の調整(`next-ruleset-cards-v1.md`)
+  と併用する。

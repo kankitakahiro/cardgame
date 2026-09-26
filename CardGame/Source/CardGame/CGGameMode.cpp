@@ -50,6 +50,21 @@ void ACGGameMode::BeginPlay()
 		return;
 	}
 
+	// バランス検証用のheadlessデッキ最適化(コマンドライン`-OptimizeDecks=N`)。
+	// Nは色ごとの試行回数(IterationsPerColor)。`-OptimizeDeckMatches=N`と
+	// `-OptimizeDeckRounds=N`で評価1回あたりの対戦数・色を巡回する周回数を
+	// 上書きできる(RunDeckOptimization()のコメント参照)。
+	int32 OptimizeDeckIterations = 0;
+	if (FParse::Value(FCommandLine::Get(), TEXT("OptimizeDecks="), OptimizeDeckIterations) && OptimizeDeckIterations > 0)
+	{
+		int32 MatchesPerEvaluation = 200;
+		FParse::Value(FCommandLine::Get(), TEXT("OptimizeDeckMatches="), MatchesPerEvaluation);
+		int32 Rounds = 3;
+		FParse::Value(FCommandLine::Get(), TEXT("OptimizeDeckRounds="), Rounds);
+		RunDeckOptimization(OptimizeDeckIterations, MatchesPerEvaluation, Rounds);
+		return;
+	}
+
 	// オンライン対戦(リッスンサーバー/クライアント)の場合は、PostLogin()で
 	// 両陣営分の接続とデッキ提出が揃ってからInitializeOnlineMatch()で試合を
 	// 開始する(docs/online-play-design.md「全体アーキテクチャ」)。HUDも
@@ -345,6 +360,73 @@ void ACGGameMode::InitializeMatch()
 	StartTurn();
 }
 
+int32 ACGGameMode::PlaySimulatedMatch(const TArray<FName>& DeckSide0, const TArray<FName>& DeckSide1)
+{
+	UWorld* World = GetWorld();
+	ACGGameState* CGState = GetCGGameState();
+	if (!World || !CGState)
+	{
+		return 0;
+	}
+	const TSubclassOf<APlayerState> SideClass = PlayerStateClass ? *PlayerStateClass : ACGPlayerState::StaticClass();
+	const TArray<FName>* Decks[2] = { &DeckSide0, &DeckSide1 };
+
+	// 前回対戦分のPlayerStateを破棄してから作り直す(InitializeMatch()と
+	// 同じ手順だが、こちらはSides.Reset()の前に明示的にDestroyする点が異なる。
+	// 通常のInitializeMatch()は起動時に1回しか呼ばれないため、そこでは
+	// 前回分の破棄を気にする必要が無かった)。
+	for (ACGPlayerState* OldSide : CGState->Sides)
+	{
+		if (OldSide)
+		{
+			OldSide->Destroy();
+		}
+	}
+	CGState->Sides.Reset();
+	CGState->PendingChoice = FCGPendingChoice();
+
+	const int32 FirstPlayerIndex = FMath::RandBool() ? 0 : 1;
+	for (int32 i = 0; i < 2; ++i)
+	{
+		ACGPlayerState* Side = World->SpawnActor<ACGPlayerState>(SideClass);
+		if (!Side)
+		{
+			continue;
+		}
+		Side->SideIndex = i;
+		Side->MaxHP = 20;
+		Side->CurrentHP = 20;
+		Side->MaxMana = 0;
+		Side->CurrentMana = 0;
+		Side->bIsDefeated = false;
+		Side->InitializeStartingDeck(*Decks[i]);
+		for (int32 d = 0; d < 5; ++d)
+		{
+			Side->DrawCard();
+		}
+		if (i != FirstPlayerIndex)
+		{
+			Side->DrawCard();
+			Side->PurchaseMana += 1;
+			Side->PendingBonusMana = 1; // 後手の最初の1ターンだけマナ+1(Hearthstoneの「コイン」相当)。
+			Side->bWentSecond = true;
+		}
+		CGState->Sides.Add(Side);
+	}
+	CGState->InitializeMarket();
+	CGState->TurnCount = 0;
+	CGState->WinnerPlayerIndex = -1;
+	CGState->CurrentTurnPlayerIndex = FirstPlayerIndex;
+
+	// StartTurn()がbSimulateBothSidesAsAI経由で両陣営とも自動進行し、
+	// RequestEndTurn->CompleteEndTurn->StartTurnの再帰チェーンで、決着が
+	// つくか(StartTurn内の)ターン数上限に達するまで、この1回の呼び出しで
+	// 対戦全体が進む。呼び出し側はCGState->WinnerPlayerIndex/TurnCount/
+	// Sides[]から結果を読む。
+	StartTurn();
+	return FirstPlayerIndex;
+}
+
 void ACGGameMode::RunSelfPlaySimulation(int32 NumMatches)
 {
 	UWorld* World = GetWorld();
@@ -357,7 +439,6 @@ void ACGGameMode::RunSelfPlaySimulation(int32 NumMatches)
 	static constexpr ECGColor AllColors[] = {
 		ECGColor::Red, ECGColor::Orange, ECGColor::Green, ECGColor::Blue, ECGColor::Purple
 	};
-	const TSubclassOf<APlayerState> SideClass = PlayerStateClass ? *PlayerStateClass : ACGPlayerState::StaticClass();
 
 	TMap<ECGColor, int32> WinsByColor;
 	TMap<ECGColor, int32> LossesByColor;
@@ -396,58 +477,12 @@ void ACGGameMode::RunSelfPlaySimulation(int32 NumMatches)
 			AllColors[FMath::RandRange(0, UE_ARRAY_COUNT(AllColors) - 1)],
 		};
 
-		// 前回対戦分のPlayerStateを破棄してから作り直す(InitializeMatch()と
-		// 同じ手順だが、こちらはSides.Reset()の前に明示的にDestroyする点が異なる。
-		// 通常のInitializeMatch()は起動時に1回しか呼ばれないため、そこでは
-		// 前回分の破棄を気にする必要が無かった)。
-		for (ACGPlayerState* OldSide : CGState->Sides)
-		{
-			if (OldSide)
-			{
-				OldSide->Destroy();
-			}
-		}
-		CGState->Sides.Reset();
-		CGState->PendingChoice = FCGPendingChoice();
-
-		const int32 FirstPlayerIndex = FMath::RandBool() ? 0 : 1;
-		for (int32 i = 0; i < 2; ++i)
-		{
-			ACGPlayerState* Side = World->SpawnActor<ACGPlayerState>(SideClass);
-			if (!Side)
-			{
-				continue;
-			}
-			Side->SideIndex = i;
-			Side->MaxHP = 20;
-			Side->CurrentHP = 20;
-			Side->MaxMana = 0;
-			Side->CurrentMana = 0;
-			Side->bIsDefeated = false;
-			Side->InitializeStartingDeck(UCGCardDatabase::GetBasicColorDeckCardIds(SideColors[i]));
-			for (int32 d = 0; d < 5; ++d)
-			{
-				Side->DrawCard();
-			}
-			if (i != FirstPlayerIndex)
-			{
-				Side->DrawCard();
-				Side->PurchaseMana += 1;
-				Side->PendingBonusMana = 1; // 後手の最初の1ターンだけマナ+1(Hearthstoneの「コイン」相当)。
-				Side->bWentSecond = true;
-			}
-			CGState->Sides.Add(Side);
-		}
-		CGState->InitializeMarket();
-		CGState->TurnCount = 0;
-		CGState->WinnerPlayerIndex = -1;
-		CGState->CurrentTurnPlayerIndex = FirstPlayerIndex;
-
-		// StartTurn()がbSimulateBothSidesAsAI経由で両陣営とも自動進行し、
-		// RequestEndTurn->CompleteEndTurn->StartTurnの再帰チェーンで、決着が
-		// つくか(StartTurn内の)ターン数上限に達するまで、この1回の呼び出しで
-		// 対戦全体が進む。
-		StartTurn();
+		// 対戦1回分の準備(PlayerState破棄・再生成・デッキ配布・マーケット公開)と
+		// StartTurn()呼び出しはPlaySimulatedMatch()に切り出している
+		// (RunDeckOptimization()と共有するため)。
+		const int32 FirstPlayerIndex = PlaySimulatedMatch(
+			UCGCardDatabase::GetBasicColorDeckCardIds(SideColors[0]),
+			UCGCardDatabase::GetBasicColorDeckCardIds(SideColors[1]));
 
 		// カード単位の集計。同じカードを1試合中に複数回プレイしても1試合として
 		// 二重に数えないよう、試合ごとにユニーク化してから集計する。
@@ -585,6 +620,208 @@ void ACGGameMode::RunSelfPlaySimulation(int32 NumMatches)
 				*Stat.CardId.ToString(), *Stat.CardName, Stat.Games, Stat.WinRate);
 		}
 	}
+
+	// シミュレーション専用起動(-SimulateMatches)ではGUI操作の必要が無いため、
+	// 集計ログの出力が終わり次第エンジンを自動終了させる。これにより呼び出し側
+	// スクリプトはプロセスの終了を待つだけで次のログ集計処理に進める。
+	UE_LOG(LogCardGame, Log, TEXT("RunSelfPlaySimulation: simulation complete, requesting engine exit"));
+	FPlatformMisc::RequestExit(false, TEXT("RunSelfPlaySimulation"));
+}
+
+namespace
+{
+	// 色の基本デッキ(25枚、同名カード最大3枚)から、1枚だけ別のカードに入れ替えた
+	// 新しいデッキを作る(山登り法の近傍生成)。Poolはその色のカードId一覧
+	// (`UCGCardDatabase::GetAllCards()`をColorで絞り込んだもの)。
+	TArray<FName> MutateDeckOneCard(const TArray<FName>& Deck, const TArray<FName>& Pool)
+	{
+		TArray<FName> NewDeck = Deck;
+		if (Pool.Num() < 2 || NewDeck.Num() == 0)
+		{
+			return NewDeck;
+		}
+
+		const int32 RemoveIndex = FMath::RandRange(0, NewDeck.Num() - 1);
+		const FName RemovedId = NewDeck[RemoveIndex];
+
+		TMap<FName, int32> Counts;
+		for (const FName& Id : NewDeck)
+		{
+			Counts.FindOrAdd(Id)++;
+		}
+
+		// ランダムな候補を同名3枚制限に収まるまで試す(最大30回、それでも
+		// 見つからなければ入れ替えを諦めて元のデッキのまま返す)。
+		for (int32 Try = 0; Try < 30; ++Try)
+		{
+			const FName Candidate = Pool[FMath::RandRange(0, Pool.Num() - 1)];
+			if (Candidate == RemovedId)
+			{
+				continue;
+			}
+			if (Counts.FindRef(Candidate) < 3)
+			{
+				NewDeck[RemoveIndex] = Candidate;
+				break;
+			}
+		}
+		return NewDeck;
+	}
+
+	// デッキの構成(カードId→採用枚数)を、枚数の多い順・カードIdの昇順で
+	// ログに出しやすい形に整形する。
+	TArray<TPair<FName, int32>> SortedDeckComposition(const TArray<FName>& Deck)
+	{
+		TMap<FName, int32> Counts;
+		for (const FName& Id : Deck)
+		{
+			Counts.FindOrAdd(Id)++;
+		}
+		TArray<TPair<FName, int32>> Sorted;
+		for (const TPair<FName, int32>& Pair : Counts)
+		{
+			Sorted.Add(Pair);
+		}
+		Sorted.Sort([](const TPair<FName, int32>& A, const TPair<FName, int32>& B)
+		{
+			if (A.Value != B.Value)
+			{
+				return A.Value > B.Value;
+			}
+			return A.Key.LexicalLess(B.Key);
+		});
+		return Sorted;
+	}
+}
+
+void ACGGameMode::RunDeckOptimization(int32 IterationsPerColor, int32 MatchesPerEvaluation, int32 Rounds)
+{
+	ACGGameState* CGState = GetCGGameState();
+	if (!CGState)
+	{
+		return;
+	}
+
+	static constexpr ECGColor AllColors[] = {
+		ECGColor::Red, ECGColor::Orange, ECGColor::Green, ECGColor::Blue, ECGColor::Purple
+	};
+
+	// 色ごとのカードId一覧(山登り法の入れ替え候補プール)。
+	TMap<ECGColor, TArray<FName>> ColorPools;
+	for (const FCGCardDef& Card : UCGCardDatabase::GetAllCards())
+	{
+		if (Card.Color != ECGColor::None)
+		{
+			ColorPools.FindOrAdd(Card.Color).Add(Card.CardId);
+		}
+	}
+
+	// 探索の起点は現状の基本デッキ(`GetBasicColorDeckCardIds`)。
+	TMap<ECGColor, TArray<FName>> BestDecks;
+	TMap<ECGColor, TArray<FName>> BaselineDecks;
+	for (const ECGColor Color : AllColors)
+	{
+		const TArray<FName> Deck = UCGCardDatabase::GetBasicColorDeckCardIds(Color);
+		BestDecks.Add(Color, Deck);
+		BaselineDecks.Add(Color, Deck);
+	}
+
+	bSimulateBothSidesAsAI = true;
+
+	// CandidateDeck(色Color)を、他4色の現時点のベストデッキと総当たりで
+	// MatchesPerEvaluation回対戦させ、勝率(%)を返す(引き分けは分母に含むが
+	// 勝ちには数えない)。対戦相手は他色を均等に巡回させる。
+	auto EvaluateWinRate = [&](ECGColor Color, const TArray<FName>& CandidateDeck, int32 NumMatches) -> float
+	{
+		TArray<ECGColor> Opponents;
+		for (const ECGColor Other : AllColors)
+		{
+			if (Other != Color)
+			{
+				Opponents.Add(Other);
+			}
+		}
+		if (Opponents.Num() == 0 || NumMatches <= 0)
+		{
+			return 0.f;
+		}
+
+		int32 Wins = 0;
+		for (int32 MatchIndex = 0; MatchIndex < NumMatches; ++MatchIndex)
+		{
+			const ECGColor OpponentColor = Opponents[MatchIndex % Opponents.Num()];
+			PlaySimulatedMatch(CandidateDeck, BestDecks[OpponentColor]);
+			if (CGState->WinnerPlayerIndex == 0)
+			{
+				++Wins;
+			}
+		}
+		return 100.f * Wins / NumMatches;
+	};
+
+	UE_LOG(LogCardGame, Log, TEXT("=== DeckOptimization: %d round(s), %d iteration(s)/color/round, %d match(es)/evaluation ==="),
+		Rounds, IterationsPerColor, MatchesPerEvaluation);
+
+	for (int32 Round = 0; Round < Rounds; ++Round)
+	{
+		for (const ECGColor Color : AllColors)
+		{
+			const TArray<FName>* Pool = ColorPools.Find(Color);
+			if (!Pool || Pool->Num() < 2)
+			{
+				continue;
+			}
+
+			float CurrentBestWinRate = EvaluateWinRate(Color, BestDecks[Color], MatchesPerEvaluation);
+			UE_LOG(LogCardGame, Log, TEXT("DeckOptimization Round=%d Color=%s start WinRate=%.1f%%"),
+				Round + 1, *UEnum::GetValueAsString(Color), CurrentBestWinRate);
+
+			for (int32 Iter = 0; Iter < IterationsPerColor; ++Iter)
+			{
+				const TArray<FName> Candidate = MutateDeckOneCard(BestDecks[Color], *Pool);
+				const float CandidateWinRate = EvaluateWinRate(Color, Candidate, MatchesPerEvaluation);
+				if (CandidateWinRate > CurrentBestWinRate)
+				{
+					UE_LOG(LogCardGame, Log, TEXT("DeckOptimization Round=%d Color=%s Iter=%d/%d WinRate=%.1f%% -> accepted (was %.1f%%)"),
+						Round + 1, *UEnum::GetValueAsString(Color), Iter + 1, IterationsPerColor, CandidateWinRate, CurrentBestWinRate);
+					BestDecks[Color] = Candidate;
+					CurrentBestWinRate = CandidateWinRate;
+				}
+				else
+				{
+					UE_LOG(LogCardGame, Log, TEXT("DeckOptimization Round=%d Color=%s Iter=%d/%d WinRate=%.1f%% -> rejected (best %.1f%%)"),
+						Round + 1, *UEnum::GetValueAsString(Color), Iter + 1, IterationsPerColor, CandidateWinRate, CurrentBestWinRate);
+				}
+			}
+		}
+	}
+
+	// 最終評価(ベースライン/最終デッキの勝率再計測)もPlaySimulatedMatch経由の
+	// 自己対戦のため、bSimulateBothSidesAsAIをfalseに戻すのはこの後で行う
+	// (先に戻すと両陣営ともAI自動進行しなくなり、対戦が決着せず勝率が
+	// 正しく計測できない)。
+	UE_LOG(LogCardGame, Log, TEXT("=== DeckOptimization: final decks ==="));
+	for (const ECGColor Color : AllColors)
+	{
+		const float BaselineWinRate = EvaluateWinRate(Color, BaselineDecks[Color], MatchesPerEvaluation);
+		const float FinalWinRate = EvaluateWinRate(Color, BestDecks[Color], MatchesPerEvaluation);
+		UE_LOG(LogCardGame, Log, TEXT("DeckOptimization Result Color=%s BaselineWinRate=%.1f%% FinalWinRate=%.1f%% Delta=%+.1f%%"),
+			*UEnum::GetValueAsString(Color), BaselineWinRate, FinalWinRate, FinalWinRate - BaselineWinRate);
+
+		for (const TPair<FName, int32>& Entry : SortedDeckComposition(BestDecks[Color]))
+		{
+			FCGCardDef Def;
+			const FString CardName = UCGCardDatabase::FindCard(Entry.Key, Def) ? Def.CardName : TEXT("?");
+			UE_LOG(LogCardGame, Log, TEXT("DeckOptimization   %s(%s) x%d"), *Entry.Key.ToString(), *CardName, Entry.Value);
+		}
+	}
+
+	bSimulateBothSidesAsAI = false;
+
+	// シミュレーション専用起動(-OptimizeDecks)ではGUI操作の必要が無いため、
+	// 結果の出力が終わり次第エンジンを自動終了させる(-SimulateMatchesと同じ方針)。
+	UE_LOG(LogCardGame, Log, TEXT("RunDeckOptimization: optimization complete, requesting engine exit"));
+	FPlatformMisc::RequestExit(false, TEXT("RunDeckOptimization"));
 }
 
 void ACGGameMode::StartTurn()
@@ -626,7 +863,7 @@ void ACGGameMode::StartTurn()
 
 		// ターン開始時の常在効果(次期ルール、フェーズ4b。B05の1ドロー、O08の
 		// コイン増加など)。
-		Active->ApplyOnTurnStartAuraEffects(TurnOpponent);
+		Active->ApplyOnTurnStartAuraEffects(TurnOpponent, CGState);
 	}
 
 	CGState->CurrentPhase = ECGPhase::Main;
@@ -656,6 +893,42 @@ ACGPlayerState* ACGGameMode::GetOpponent(int32 SideIndex) const
 		return nullptr;
 	}
 	return CGState->Sides[SideIndex == 0 ? 1 : 0];
+}
+
+void ACGGameMode::ResolveDeathsForBothSides(ACGPlayerState* SideA, ACGPlayerState* SideB, ACGGameState* CGState)
+{
+	if (!SideA || !SideB)
+	{
+		return;
+	}
+
+	// 1回のRemoveDeadUnitsAndGetDeathDrawCount()呼び出しは、呼び出した側自身の場に
+	// 残るHp<=0のUnitを全て取り除く(自陣内で死が死を呼ぶ効果は今のところ無い)。
+	// ただし死亡時効果が反対側の場のUnitを巻き添えにすることがある(R01)ため、
+	// 反対側にも新たな死亡が生まれていないか、両陣営を交互に見て収束するまで
+	// 繰り返す。現実装の巻き添え効果は1体・1回だけなので通常1〜2周で収まるが、
+	// 想定外の連鎖で無限ループにならないよう上限を設ける。
+	for (int32 SafetyCounter = 0; SafetyCounter < 8; ++SafetyCounter)
+	{
+		const int32 DeathDrawsA = SideA->RemoveDeadUnitsAndGetDeathDrawCount(SideB, CGState);
+		for (int32 i = 0; i < DeathDrawsA; ++i)
+		{
+			SideA->DrawCard();
+		}
+		const int32 DeathDrawsB = SideB->RemoveDeadUnitsAndGetDeathDrawCount(SideA, CGState);
+		for (int32 i = 0; i < DeathDrawsB; ++i)
+		{
+			SideB->DrawCard();
+		}
+
+		const bool bAnyDeadRemaining =
+			SideA->BoardUnits.ContainsByPredicate([](const FCGBoardUnit& Unit) { return Unit.Hp <= 0; })
+			|| SideB->BoardUnits.ContainsByPredicate([](const FCGBoardUnit& Unit) { return Unit.Hp <= 0; });
+		if (!bAnyDeadRemaining)
+		{
+			break;
+		}
+	}
 }
 
 bool ACGGameMode::RequestPlayCard(int32 SideIndex, FName CardId, int32 TargetUnitIndex)
@@ -690,23 +963,28 @@ bool ACGGameMode::RequestPlayCard(int32 SideIndex, FName CardId, int32 TargetUni
 
 			// カードプレイ演出用(「それぞれのカードがプレイされた演出もない」という
 			// フィードバックへの対応)。Unitはこの時点でSide->BoardUnitsの末尾に
-			// 追加済みのため、その場インデックスを記録しておく。
-			CGState->LastCardPlayResult.SideIndex = SideIndex;
-			CGState->LastCardPlayResult.CardId = CardId;
-			CGState->LastCardPlayResult.bIsUnit = (PlayedDef.CardType == ECGCardType::Unit);
-			CGState->LastCardPlayResult.BoardIndex = (CGState->LastCardPlayResult.bIsUnit && Side)
-				? Side->BoardUnits.Num() - 1
-				: -1;
-			++CGState->CardPlaySequenceNumber;
+			// 追加済みのため、その場インデックスを記録しておく。ただし生け贄
+			// (Sacrifice)持ちUnitは、この時点ではまだ場に出ておらず(生け贄選択が
+			// 解決してから出る)、代わりにACGGameMode::ResolvePendingChoiceAllyTarget
+			// 側で記録する(そうしないと既存の無関係なUnitを誤って演出対象に
+			// してしまう)。
+			const bool bSacrificePending = CGState->PendingChoice.IsActive()
+				&& CGState->PendingChoice.EffectId == FName(CGEffectId::SacrificeAllyOnPlay);
+			if (!bSacrificePending)
+			{
+				CGState->LastCardPlayResult.SideIndex = SideIndex;
+				CGState->LastCardPlayResult.CardId = CardId;
+				CGState->LastCardPlayResult.bIsUnit = (PlayedDef.CardType == ECGCardType::Unit);
+				CGState->LastCardPlayResult.BoardIndex = (CGState->LastCardPlayResult.bIsUnit && Side)
+					? Side->BoardUnits.Num() - 1
+					: -1;
+				++CGState->CardPlaySequenceNumber;
+			}
 		}
 
 		if (Opponent)
 		{
-			const int32 DeathDraws = Opponent->RemoveDeadUnitsAndGetDeathDrawCount(Side, CGState);
-			for (int32 i = 0; i < DeathDraws; ++i)
-			{
-				Opponent->DrawCard();
-			}
+			ResolveDeathsForBothSides(Side, Opponent, CGState);
 		}
 		// 変貌(紫)のHandSizeAtMost条件用: カードをプレイすると手札が減るため、
 		// ここで再判定する(docs/next-ruleset-cards-v1.md「変貌先カード」P06)。
@@ -754,6 +1032,29 @@ bool ACGGameMode::RequestBuyCard(int32 SideIndex, int32 MarketSlotIndex)
 		// 補充は買った本人の山札からではなく、この枠の出どころの山札から行う
 		// (自滅スパイラル対策として決定。docs/next-ruleset-design.md「マーケット」)。
 		CGState->RefillMarketSlot(MarketSlotIndex);
+
+		// O16強奪の商人: 自分が購入するたびに、敵のランダムなUnit1体へダメージを
+		// 与える常在効果。BuyCard()自体はOpponentを持たないため、ここで判定する。
+		// ダメージで死亡が起こり得るため(R01のような巻き添え連鎖も含め)、
+		// 両陣営分の死亡処理を必ず行う。
+		ACGPlayerState* Opponent = GetOpponent(SideIndex);
+		// B06「深淵の封印」: 相手がB06を出していればO16のアウラも発動しない。
+		if (Opponent && Opponent->BoardUnits.Num() > 0 && !Side->AreUnitAbilitiesSuppressedByEnemy(Opponent))
+		{
+			for (const FCGBoardUnit& Unit : Side->BoardUnits)
+			{
+				FCGCardDef UnitDef;
+				if (UCGCardDatabase::FindCard(Unit.CardId, UnitDef)
+					&& UnitDef.EffectId == FName(CGEffectId::OnBuyDamageRandomEnemyUnit)
+					&& Opponent->BoardUnits.Num() > 0)
+				{
+					const int32 RandomUnitIndex = FMath::RandRange(0, Opponent->BoardUnits.Num() - 1);
+					Opponent->ApplyDamageToUnit(RandomUnitIndex, UnitDef.EffectValue);
+				}
+			}
+			ResolveDeathsForBothSides(Side, Opponent, CGState);
+			CheckWinLose();
+		}
 
 		// 行動ログ(次期ルール、docs/game-rules-minimum.md「行動ログ」参照)。
 		FCGCardDef BoughtDef;
@@ -890,14 +1191,16 @@ bool ACGGameMode::ExecuteAttack(int32 AttackerSideIndex, int32 AttackerUnitIndex
 		Attacker->ApplyDamageToUnit(AttackerUnitIndex, CounterDamage);
 
 		// G12不屈の大樹: このユニットが攻撃(防御側として)を受けるたびに味方
-		// リーダーを1回復する(docs/next-ruleset-cards-v1.md「緑」)。
+		// リーダーを回復する(docs/next-ruleset-cards-v1.md「緑」)。「緑に回復
+		// できる要素を少し増やしてほしい」というフィードバックを受け1→2に調整
+		// (EffectId名の末尾の「1」は旧仕様の名残でそのまま残している)。
 		if (TargetDef.EffectId == FName(CGEffectId::OnDefendHealSelf1))
 		{
-			Defender->Heal(1);
+			Defender->Heal(2);
 		}
 
 		// 変貌(紫)のSurvivedAttacks条件用: 攻撃を受けて生き残ったユニットの進行度を
-		// +1する(docs/next-ruleset-cards-v1.md「変貌先カード」P03若き見習い)。
+		// +1する(docs/next-ruleset-cards-v1.md「変貌先カード」P03香り売りの侍従)。
 		// 死亡処理(RemoveDeadUnitsAndGetDeathDrawCount)より前、HPがまだ確定した
 		// 直後のこのタイミングで判定する必要がある。
 		if (Defender->BoardUnits[TargetUnitIndex].Hp > 0
@@ -939,16 +1242,7 @@ bool ACGGameMode::ExecuteAttack(int32 AttackerSideIndex, int32 AttackerUnitIndex
 	Attacker->CheckAllTransforms(Defender, CGState);
 	Defender->CheckAllTransforms(Attacker, CGState);
 
-	int32 DeathDraws = Attacker->RemoveDeadUnitsAndGetDeathDrawCount(Defender, CGState);
-	for (int32 i = 0; i < DeathDraws; ++i)
-	{
-		Attacker->DrawCard();
-	}
-	DeathDraws = Defender->RemoveDeadUnitsAndGetDeathDrawCount(Attacker, CGState);
-	for (int32 i = 0; i < DeathDraws; ++i)
-	{
-		Defender->DrawCard();
-	}
+	ResolveDeathsForBothSides(Attacker, Defender, CGState);
 
 	CheckWinLose();
 	NotifyStateChanged();
@@ -975,19 +1269,15 @@ void ACGGameMode::RequestEndTurn(int32 SideIndex)
 	ACGPlayerState* EndTurnOpponent = GetOpponent(SideIndex);
 	Side->ResolveEndTurnEffects(EndTurnOpponent);
 
-	// B10(衰弱の監視者)等、敵Unitを対象にするターン終了時常在効果でユニットが
+	// B10(弱点の考察官)等、敵Unitを対象にするターン終了時常在効果でユニットが
 	// 死亡することがあるため、通常の攻撃・カード効果と同じ死亡処理を行う。
 	if (EndTurnOpponent)
 	{
-		const int32 DeathDraws = EndTurnOpponent->RemoveDeadUnitsAndGetDeathDrawCount(Side, CGState);
-		for (int32 i = 0; i < DeathDraws; ++i)
-		{
-			EndTurnOpponent->DrawCard();
-		}
+		ResolveDeathsForBothSides(Side, EndTurnOpponent, CGState);
 		CheckWinLose();
 	}
 
-	// 市場の仲買人(C007): 条件を満たしていれば、捨てるカードを選んでからターン終了を
+	// 荒野の行商人(C007): 条件を満たしていれば、捨てるカードを選んでからターン終了を
 	// 完了する(docs/architecture.md「選択待ち(PendingChoice)の仕組み」)。
 	// 本来は発動する/しないも選べるはずだが、まずは「どのカードを捨てるか」を
 	// 選べるようにする範囲に留めている。
@@ -998,7 +1288,7 @@ void ACGGameMode::RequestEndTurn(int32 SideIndex)
 		Choice.ChoiceType = ECGChoiceType::HandCard;
 		Choice.SideIndex = SideIndex;
 		Choice.EffectId = FName(CGEffectId::OnBuyEndTurnDiscardDraw);
-		Choice.PromptText = TEXT("市場の仲買人: 捨てるカードを選んでください(捨てると1枚引きます)");
+		Choice.PromptText = TEXT("荒野の行商人: 捨てるカードを選んでください(捨てると1枚引きます)");
 		BeginChoice(Choice);
 		AutoResolveChoiceIfAI();
 		return; // ターン終了はResolvePendingChoiceWithCard側で完了させる。
@@ -1085,7 +1375,7 @@ void ACGGameMode::AutoResolveChoiceIfAI()
 			ChosenTarget = (GuardIndex != -1) ? GuardIndex
 				: (Choice.EffectId == FName(CGEffectId::AttackTarget))
 					? UCGAIOpponent::ChooseAttackTarget(*Side, *Opponent, Choice.AttackerUnitIndex)
-					: UCGAIOpponent::ChooseDamageTarget(*Opponent, Choice.PendingDamageAmount);
+					: UCGAIOpponent::ChooseDamageTarget(*Side, *Opponent, Choice.PendingDamageAmount, Choice.bRequireUnitTarget);
 		}
 		ResolvePendingChoiceWithTarget(Choice.SideIndex, ChosenTarget);
 		break;
@@ -1118,10 +1408,13 @@ void ACGGameMode::AutoResolveChoiceIfAI()
 	case ECGChoiceType::AllyUnitTarget:
 	{
 		// P16(仮称、強制変貌)は強化と選ぶ基準が違う(Atkの高さではなく
-		// 変貌可能かどうか)ため専用の選択関数を使う。
+		// 変貌可能かどうか)ため専用の選択関数を使う。生け贄(Sacrifice)も
+		// 同様に「一番弱いUnitを選ぶ」という逆方向の基準になるため専用関数を使う。
 		const int32 ChosenTarget = (Choice.EffectId == FName(CGEffectId::OnPlayForceTransformAllyTarget))
 			? UCGAIOpponent::ChooseAllyTransformTarget(*Side)
-			: UCGAIOpponent::ChooseAllyBuffTarget(*Side);
+			: (Choice.EffectId == FName(CGEffectId::SacrificeAllyOnPlay))
+				? UCGAIOpponent::ChooseAllySacrificeTarget(*Side)
+				: UCGAIOpponent::ChooseAllyBuffTarget(*Side);
 		ResolvePendingChoiceAllyTarget(Choice.SideIndex, ChosenTarget);
 		break;
 	}
@@ -1164,12 +1457,12 @@ bool ACGGameMode::ResolvePendingChoiceWithCard(int32 SideIndex, FName ChosenCard
 		if (Side->DiscardSpecificFromHand(ChosenCardId))
 		{
 			bResolved = true;
-			if (Choice.EffectId == FName(CGEffectId::Discard1Draw2)) // C019 手札の選別
+			if (Choice.EffectId == FName(CGEffectId::Discard1Draw2)) // C019 荒野の取捨選択
 			{
 				Side->DrawCard();
 				Side->DrawCard();
 			}
-			else if (Choice.EffectId == FName(CGEffectId::OnBuyEndTurnDiscardDraw)) // C007 市場の仲買人
+			else if (Choice.EffectId == FName(CGEffectId::OnBuyEndTurnDiscardDraw)) // C007 荒野の行商人
 			{
 				Side->DrawCard();
 			}
@@ -1187,11 +1480,11 @@ bool ACGGameMode::ResolvePendingChoiceWithCard(int32 SideIndex, FName ChosenCard
 
 		if (bValidCandidate)
 		{
-			if (Choice.EffectId == FName(CGEffectId::GraveyardToDeckBottomDraw1)) // C006 墓場あさり
+			if (Choice.EffectId == FName(CGEffectId::GraveyardToDeckBottomDraw1)) // C006 廃墟あさりの拾い屋
 			{
 				bResolved = Side->MoveSpecificDiscardCardToDeckBottom(ChosenCardId);
 			}
-			else if (Choice.EffectId == FName(CGEffectId::ReturnGraveyardSpellSelfDamage1)) // C021 墓地再点火
+			else if (Choice.EffectId == FName(CGEffectId::ReturnGraveyardSpellSelfDamage1)) // C021 結晶に灯る記憶
 			{
 				bResolved = Side->MoveSpecificDiscardCardToHand(ChosenCardId);
 				if (bResolved)
@@ -1199,7 +1492,7 @@ bool ACGGameMode::ResolvePendingChoiceWithCard(int32 SideIndex, FName ChosenCard
 					Side->ApplyDamage(1);
 				}
 			}
-			else if (Choice.EffectId == FName(CGEffectId::OnPlayReturnGraveyardCheapCard)) // C011 再誕の司祭
+			else if (Choice.EffectId == FName(CGEffectId::OnPlayReturnGraveyardCheapCard)) // C011 廃墟の蘇生司祭
 			{
 				bResolved = Side->MoveSpecificDiscardCardToHand(ChosenCardId);
 			}
@@ -1213,7 +1506,7 @@ bool ACGGameMode::ResolvePendingChoiceWithCard(int32 SideIndex, FName ChosenCard
 		const int32 SlotIndex = CGState->MarketSlots.IndexOfByPredicate(
 			[&ChosenCardId](const FCGMarketSlot& Slot) { return Slot.CardId == ChosenCardId; });
 
-		// O15独占商人: 手札へ加えず、コストを支払わずそのまま場に出す
+		// O15黒鉄の買い占め屋: 手札へ加えず、コストを支払わずそのまま場に出す
 		// (docs/next-ruleset-cards-v1.md「橙」)。手札上限は関係しないため、
 		// この場合だけ手札枚数チェックを行わず、代わりにUnitであることを確認する。
 		const bool bDeployToBoard = Choice.EffectId == FName(CGEffectId::OnPlayDeployFromMarketFree);
@@ -1235,6 +1528,13 @@ bool ACGGameMode::ResolvePendingChoiceWithCard(int32 SideIndex, FName ChosenCard
 				Side->HandCardIds.Add(ChosenCardId);
 			}
 			CGState->RefillMarketSlot(SlotIndex);
+			// 「カードの効果でマーケットから購入された場合でも橙のフィニッシャーの
+			// カウントが増えるようにしてほしい」というフィードバックへの対応。
+			// 通常のBuyCard()(ACGPlayerState::BuyCard内)以外の経路でマーケットから
+			// カードを取得する場合(O07買い付け/O15・FIN_ORANGEの無料デプロイ等)も
+			// ここでCardsPurchasedThisMatchを加算する(docs/keywords.md、
+			// フィニッシャーの発動条件参照)。
+			++Side->CardsPurchasedThisMatch;
 			bResolved = true;
 		}
 	}
@@ -1254,7 +1554,7 @@ bool ACGGameMode::ResolvePendingChoiceWithCard(int32 SideIndex, FName ChosenCard
 		&& Choice.EffectId == FName(CGEffectId::OnPlayDeployFromMarketFree)
 		&& Choice.RemainingRepeats > 0)
 	{
-		// 黄金の帝王(FIN_ORANGE)のように複数枚を1枚ずつ選ばせる効果の続き
+		// 港を興す者(FIN_ORANGE)のように複数枚を1枚ずつ選ばせる効果の続き
 		// (docs/next-ruleset-cards-v1.md「橙」)。候補が無ければ
 		// BeginMarketDeployChoice内で何もせず終わる(選択待ちに入らない)。
 		// AI側の連続選択もここから継続する必要があるため、新しい選択待ちに
@@ -1300,6 +1600,15 @@ bool ACGGameMode::ResolvePendingChoiceWithTarget(int32 SideIndex, int32 ChosenUn
 		return false;
 	}
 
+	// Unit限定の効果(例: R05黒鉄の抜き打ち)は顔面(-1)を選べない
+	// (「赤のUnit限定/リーダー限定カードがどちらも選べてしまうバグがある」
+	// というフィードバックへの対応。従来はEnemyOrFaceTarget選択が一律で
+	// 顔面も選べてしまっていた)。
+	if (Choice.bRequireUnitTarget && ChosenUnitIndex == -1)
+	{
+		return false;
+	}
+
 	CGState->PendingChoice = FCGPendingChoice();
 
 	if (Choice.EffectId == FName(CGEffectId::AttackTarget))
@@ -1307,7 +1616,7 @@ bool ACGGameMode::ResolvePendingChoiceWithTarget(int32 SideIndex, int32 ChosenUn
 		return ExecuteAttack(SideIndex, Choice.AttackerUnitIndex, ChosenUnitIndex);
 	}
 
-	// カード効果由来のダメージ(C017 火花の一撃・C024 逆転の号令)。
+	// カード効果由来のダメージ(C017 結晶の欠片・C024 土壇場の号令)。
 	if (Opponent->BoardUnits.IsValidIndex(ChosenUnitIndex))
 	{
 		Opponent->ApplyDamageToUnit(ChosenUnitIndex, Choice.PendingDamageAmount);
@@ -1318,11 +1627,7 @@ bool ACGGameMode::ResolvePendingChoiceWithTarget(int32 SideIndex, int32 ChosenUn
 	}
 
 	ACGPlayerState* Side = CGState->Sides.IsValidIndex(SideIndex) ? CGState->Sides[SideIndex] : nullptr;
-	const int32 DeathDraws = Opponent->RemoveDeadUnitsAndGetDeathDrawCount(Side, CGState);
-	for (int32 i = 0; i < DeathDraws; ++i)
-	{
-		Opponent->DrawCard();
-	}
+	ResolveDeathsForBothSides(Side, Opponent, CGState);
 
 	CheckWinLose();
 	NotifyStateChanged();
@@ -1438,7 +1743,7 @@ bool ACGGameMode::ResolvePendingChoiceSealTarget(int32 SideIndex, int32 ChosenUn
 	const FCGPendingChoice Choice = CGState->PendingChoice;
 	CGState->PendingChoice = FCGPendingChoice();
 
-	// EnemyUnitTargetは封印(青)だけでなく、対象指定の敵単体デバフ(B02、
+	// EnemyUnitTargetは断罪(青)だけでなく、対象指定の敵単体デバフ(B02、
 	// docs/next-ruleset-cards-v1.md)も同じ選択の仕組みを使う。EffectIdで分岐する
 	// (docs/architecture.md「選択待ち(PendingChoice)の仕組み」)。
 	if (Choice.EffectId == FName(CGEffectId::OnPlayDebuffTarget))
@@ -1447,11 +1752,7 @@ bool ACGGameMode::ResolvePendingChoiceSealTarget(int32 SideIndex, int32 ChosenUn
 		Opponent->BoardUnits[ChosenUnitIndex].Atk = FMath::Max(0, Opponent->BoardUnits[ChosenUnitIndex].Atk + Delta);
 		Opponent->BoardUnits[ChosenUnitIndex].Hp += Delta;
 
-		const int32 DeathDraws = Opponent->RemoveDeadUnitsAndGetDeathDrawCount(Side, CGState);
-		for (int32 i = 0; i < DeathDraws; ++i)
-		{
-			Opponent->DrawCard();
-		}
+		ResolveDeathsForBothSides(Side, Opponent, CGState);
 
 		CheckWinLose();
 		NotifyStateChanged();
@@ -1466,11 +1767,7 @@ bool ACGGameMode::ResolvePendingChoiceSealTarget(int32 SideIndex, int32 ChosenUn
 	{
 		Opponent->ApplyDamageToUnit(ChosenUnitIndex, Choice.PendingDamageAmount);
 
-		const int32 DeathDraws = Opponent->RemoveDeadUnitsAndGetDeathDrawCount(Side, CGState);
-		for (int32 i = 0; i < DeathDraws; ++i)
-		{
-			Opponent->DrawCard();
-		}
+		ResolveDeathsForBothSides(Side, Opponent, CGState);
 
 		CheckWinLose();
 		NotifyStateChanged();
@@ -1479,25 +1776,32 @@ bool ACGGameMode::ResolvePendingChoiceSealTarget(int32 SideIndex, int32 ChosenUn
 		return true;
 	}
 
-	int32 SealedCost = 0;
-	if (!Opponent->SealUnit(ChosenUnitIndex, SealedCost))
+	int32 CondemnedCost = 0;
+	if (!Opponent->CondemnUnit(ChosenUnitIndex, CondemnedCost))
 	{
 		return false;
 	}
 
-	// 青パッシブは「2回目のドロー時」に発動条件が変わり、封印とは無関係になった
+	// 断罪(Condemn、旧「封印」)は通常の死亡処理(墓地送り・死亡時効果・死亡数
+	// カウント)を経由させる。B15の2体目選択で場のUnit数を数え直す前に、
+	// 必ずここで死亡処理を確定させる(「ユニットを死亡させるキーワード能力に
+	// してほしい」というフィードバックへの対応。docs/keywords.md「断罪
+	// (Condemn)」参照)。
+	ResolveDeathsForBothSides(Side, Opponent, CGState);
+
+	// 青パッシブは「2回目のドロー時」に発動条件が変わり、断罪とは無関係になった
 	// (docs/game-rules-minimum.md「色ガイド」)。
 
-	// B04幻惑の魔道士: 自分が封印を成功させるたびに敵リーダーへ1ダメージ。
+	// B04頁繰りの魔道士: 自分が断罪を成功させるたびに敵リーダーへ1ダメージ。
 	Side->NotifySealSucceeded(Opponent);
 
-	// B09叡智の追放: 封印に成功したらコインを1増加。
+	// B09叡智の追放: 断罪に成功したらコインを1増加。
 	if (Choice.EffectId == FName(CGEffectId::SealSpellGrantPurchaseMana))
 	{
 		Side->PurchaseMana += 1;
 	}
 
-	// B15双つの追放: 1体目の封印が成功したら、対象が残っていれば2体目の選択を
+	// B15双つの追放: 1体目の断罪が成功したら、対象が残っていれば2体目の選択を
 	// 自動で開始する(2体目はここで打ち止め、SealSpellマーカーで再帰させない)。
 	if (Choice.EffectId == FName(CGEffectId::SealSpellTwo) && Opponent->BoardUnits.Num() > 0)
 	{
@@ -1506,15 +1810,15 @@ bool ACGGameMode::ResolvePendingChoiceSealTarget(int32 SideIndex, int32 ChosenUn
 		SecondChoice.SideIndex = SideIndex;
 		SecondChoice.EffectId = FName(CGEffectId::SealSpell);
 		SecondChoice.MaxCost = -1;
-		SecondChoice.PromptText = TEXT("封印するもう1体の敵ユニットを選んでください");
+		SecondChoice.PromptText = TEXT("断罪するもう1体の敵ユニットを選んでください");
 		BeginChoice(SecondChoice);
 		AutoResolveChoiceIfAI();
 	}
 
 	CheckWinLose();
 	NotifyStateChanged();
-	UE_LOG(LogCardGame, Log, TEXT("ResolvePendingChoiceSealTarget: Side=%d Target=%d SealedCost=%d -> OK"),
-		SideIndex, ChosenUnitIndex, SealedCost);
+	UE_LOG(LogCardGame, Log, TEXT("ResolvePendingChoiceSealTarget: Side=%d Target=%d CondemnedCost=%d -> OK"),
+		SideIndex, ChosenUnitIndex, CondemnedCost);
 	return true;
 }
 
@@ -1554,13 +1858,53 @@ bool ACGGameMode::ResolvePendingChoiceAllyTarget(int32 SideIndex, int32 ChosenUn
 		return true;
 	}
 
+	// 生け贄(Sacrifice、R07/R13/R15): 選んだ味方Unitを生け贄にしてから、
+	// プレイ中だったUnit(Choice.RevealedCardIdに控えてある)を実際に場へ出す
+	// (docs/keywords.md「生け贄(Sacrifice)」参照)。
+	if (Choice.EffectId == FName(CGEffectId::SacrificeAllyOnPlay))
+	{
+		FCGCardDef SacrificeSourceDef;
+		if (!UCGCardDatabase::FindCard(Choice.RevealedCardId, SacrificeSourceDef))
+		{
+			return false;
+		}
+
+		CGState->PendingChoice = FCGPendingChoice();
+
+		// 生け贄にするUnitのHpを0にするだけでよく、実際の死亡処理(墓地送り・
+		// 死亡時効果・死亡数カウント)は下のResolveDeathsForBothSidesが行う。
+		Side->BoardUnits[ChosenUnitIndex].Hp = 0;
+
+		ACGPlayerState* SacrificeOpponent = GetOpponent(SideIndex);
+		Side->SpawnUnitFromHandOnBoard(Choice.RevealedCardId, SacrificeSourceDef, /*bIsSecondOrLaterPlayThisTurn=*/false, SacrificeOpponent, CGState);
+
+		// カードプレイ演出用(RequestPlayCard側では、生け贄選択待ちに入った時点では
+		// まだ場に出ていなかったため記録を見送っていた。ここで改めて記録する)。
+		CGState->LastCardPlayResult.SideIndex = SideIndex;
+		CGState->LastCardPlayResult.CardId = Choice.RevealedCardId;
+		CGState->LastCardPlayResult.bIsUnit = true;
+		CGState->LastCardPlayResult.BoardIndex = Side->BoardUnits.Num() - 1;
+		++CGState->CardPlaySequenceNumber;
+
+		if (SacrificeOpponent)
+		{
+			ResolveDeathsForBothSides(Side, SacrificeOpponent, CGState);
+		}
+
+		CheckWinLose();
+		NotifyStateChanged();
+		UE_LOG(LogCardGame, Log, TEXT("ResolvePendingChoiceAllyTarget: Side=%d Target=%d Sacrifice Card=%s -> OK"),
+			SideIndex, ChosenUnitIndex, *Choice.RevealedCardId.ToString());
+		return true;
+	}
+
 	const int32 BuffAmount = Choice.PendingBuffAmount;
 	CGState->PendingChoice = FCGPendingChoice();
 
 	Side->BoardUnits[ChosenUnitIndex].Atk += BuffAmount;
 	Side->BoardUnits[ChosenUnitIndex].Hp += BuffAmount;
 
-	// P03若き見習い: 対象指定の味方強化を受けるたびに進行度+1(2回で変貌)。
+	// P03香り売りの侍従: 対象指定の味方強化を受けるたびに進行度+1(2回で変貌)。
 	FCGBoardUnit& BuffedUnit = Side->BoardUnits[ChosenUnitIndex];
 	FCGCardDef BuffedDef;
 	if (UCGCardDatabase::FindCard(BuffedUnit.CardId, BuffedDef)
@@ -1570,7 +1914,7 @@ bool ACGGameMode::ResolvePendingChoiceAllyTarget(int32 SideIndex, int32 ChosenUn
 	}
 	Side->CheckAllTransforms(GetOpponent(SideIndex), CGState);
 
-	// P10深淵の契約: 強化に加えて1ドローする。
+	// P10秘宝の授与: 強化に加えて1ドローする。
 	if (Choice.EffectId == FName(CGEffectId::BuffAllyTargetAndDraw))
 	{
 		Side->DrawCard();
@@ -1634,7 +1978,7 @@ void ACGGameMode::NotifyStateChanged()
 		CGState->ForceNetUpdate();
 	}
 
-	// CheckAndSpawnFinisher(上記ループ内)は黄金の帝王(FIN_ORANGE)のように
+	// CheckAndSpawnFinisher(上記ループ内)は港を興す者(FIN_ORANGE)のように
 	// 登場時に新しい選択待ち(PendingChoice)を開始することがある。この関数の
 	// 呼び出し元は「自分が起こした選択」をそれぞれ個別にAutoResolveChoiceIfAI()
 	// 済みだが、フィニッシャー登場に伴う選択はここで初めて発生するため、

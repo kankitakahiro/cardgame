@@ -88,7 +88,7 @@ public:
 	bool ResolvePendingChoiceBuyDestination(int32 SideIndex, bool bToHand);
 
 	// 選択待ち(EnemyUnitTarget: 敵ユニットを1体選ぶ、次期ルール)を解決する。
-	// Choice.EffectIdで分岐し、封印(SealSpell/SealOnPlay)なら対象ユニットを
+	// Choice.EffectIdで分岐し、断罪(SealSpell/SealOnPlay)なら対象ユニットを
 	// 場から完全に取り除いて(墓地へは送らない)青パッシブ有効時は1ドローする、
 	// 対象指定デバフ(OnPlayDebuffTarget、B02/B04)ならAtk/Hpへ
 	// Choice.PendingBuffAmount(負の値)を適用して死亡処理まで行う
@@ -115,6 +115,18 @@ public:
 	// 呼ばれ、通常のHUD/InitializeMatchは行わない(headless)。
 	void RunSelfPlaySimulation(int32 NumMatches);
 
+	// バランス検証用: 色ごとの基本デッキを起点に、山登り法(1枚だけ別のカードに
+	// 入れ替えて評価し、勝率が上がれば採用)で色ごとに勝率の高いデッキ構成を
+	// 探索する。評価は毎回、他4色の「現時点のベストデッキ」と総当たりで
+	// MatchesPerEvaluation回対戦させた勝率で行うため、色同士のデッキが
+	// ラウンドを追うごとに互いに適応していく。起動時コマンドライン引数
+	// `-OptimizeDecks=N`(色ごとの試行回数=IterationsPerColor)で呼ばれ、
+	// `-OptimizeDeckMatches=N`(評価1回あたりの対戦数、既定200)、
+	// `-OptimizeDeckRounds=N`(色を何周探索するか、既定3)も指定できる。
+	// 結果(色ごとの最終デッキ構成・ベースラインとの勝率差)をLogCardGameへ
+	// 出力して終わる(headless、RunSelfPlaySimulationと同じ位置づけ)。
+	void RunDeckOptimization(int32 IterationsPerColor, int32 MatchesPerEvaluation, int32 Rounds);
+
 	// 診断専用(一時的): 先攻/後攻の偏りの主因がマーケットの早い者勝ち購入か
 	// 戦闘の先制かを切り分けるための、購入フェーズ無効化フラグ。コマンドライン
 	// `-SimDisableBuy`でのみtrueになる。`UCGAIOpponent::RunTurn`が参照する。
@@ -129,8 +141,26 @@ public:
 	void OnMatchEnded(int32 InWinnerPlayerIndex);
 
 protected:
+	// 対戦1回分(PlayerState再生成・両陣営のデッキ配布・マーケット公開・
+	// StartTurn()呼び出し)を行う共通処理。RunSelfPlaySimulation()と
+	// RunDeckOptimization()の両方から、両陣営のデッキを直接指定して呼ばれる。
+	// 結果はCGState->WinnerPlayerIndex/TurnCount/Sides[]から読む。
+	// 戻り値は先攻側のSideIndex(0か1)。呼び出し側が先攻/後攻の勝敗集計に使う。
+	int32 PlaySimulatedMatch(const TArray<FName>& DeckSide0, const TArray<FName>& DeckSide1);
+
 	void CheckWinLose();
 	ACGPlayerState* GetOpponent(int32 SideIndex) const;
+
+	// ダメージ・デバフ等を適用した後、両陣営分の死亡処理(墓地送り+死亡時効果+
+	// 死亡時ドロー)をまとめて行う。死亡時効果の中には敵側のランダムなUnitを
+	// 巻き込んで倒すものがある(例: R01黒鉄拾いの悪童「死亡時、敵のランダムな
+	// Unit1体に1ダメージ」)。この巻き添え死は、死んだユニットの持ち主とは逆の
+	// 陣営で起きるため、どちらか片方の陣営だけ死亡処理を呼ぶと、その巻き添え死が
+	// 一切クリーンアップされず「HPが0以下なのに場に残り続ける」不具合になる
+	// (「ランダムでダメージが飛んでタフネスが0になったのにカードが残っている」
+	// というフィードバックへの対応)。そのため、どちらの陣営にもHp<=0のUnitが
+	// 残らなくなるまで両陣営を交互に処理する。
+	void ResolveDeathsForBothSides(ACGPlayerState* SideA, ACGPlayerState* SideB, ACGGameState* CGState);
 
 	// 全アクション処理の最後に呼ぶ共通フック。UI再描画イベント(OnCardGameStateChanged)
 	// の前に、公開情報用のHandCount/DeckCountを最新化する(docs/online-play-design.md

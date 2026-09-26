@@ -104,7 +104,7 @@ namespace
 	// --- Spell効果ハンドラ ---
 
 	void Handle_OnPlayDamageTarget(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
-		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // C017 火花の一撃
+		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // C017 結晶の欠片
 	{
 		// どの敵ユニット/顔面へダメージを与えるかはプレイヤー(またはAI)が選ぶ
 		// (docs/architecture.md「選択待ち(PendingChoice)の仕組み」)。
@@ -119,6 +119,23 @@ namespace
 		Choice.EffectId = FName(CGEffectId::OnPlayDamageTarget);
 		Choice.PendingDamageAmount = Def.EffectValue + FirstSpellDamageBonus;
 		Choice.PromptText = TEXT("ダメージを与える対象を選んでください");
+		CGState->PendingChoice = Choice;
+	}
+
+	void Handle_OnPlayDamageUnitTargetSpell(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
+		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // R05 黒鉄の抜き打ち(敵Unit限定、顔面は選べない)
+	{
+		if (!Opponent || !CGState)
+		{
+			return;
+		}
+		FCGPendingChoice Choice;
+		Choice.ChoiceType = ECGChoiceType::EnemyOrFaceTarget;
+		Choice.SideIndex = Self.SideIndex;
+		Choice.EffectId = FName(CGEffectId::OnPlayDamageUnitTarget);
+		Choice.PendingDamageAmount = Def.EffectValue + FirstSpellDamageBonus;
+		Choice.bRequireUnitTarget = true;
+		Choice.PromptText = TEXT("ダメージを与える敵Unitを選んでください");
 		CGState->PendingChoice = Choice;
 	}
 
@@ -148,7 +165,7 @@ namespace
 	}
 
 	void Handle_Discard1Draw2(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
-		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // C019 手札の選別
+		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // C019 荒野の取捨選択
 	{
 		// どのカードを捨てるかはプレイヤー(またはAI)が選ぶ
 		// (docs/architecture.md「選択待ち(PendingChoice)の仕組み」)。
@@ -169,7 +186,7 @@ namespace
 	}
 
 	void Handle_SummonApprenticeTokens(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
-		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // C020見習い召集/G02癒しの若葉/G11大群の号令
+		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // C020彷徨う者たちの合流/G02列に加わった旅人/G11大群の号令
 	{
 		// 0/1に弱体化(以前は1/1)。「緑のトークンを出すスペルが強すぎる」という
 		// フィードバックへの対応(docs/next-ruleset-cards-v1.md「緑」)。
@@ -190,14 +207,26 @@ namespace
 		}
 	}
 
+	void Handle_SummonEmberTokens(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
+		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // R08 赤熱の一閃
+	{
+		// TK_EMBER(赤熱の残り火)は死亡時に敵リーダーへ1ダメージを与える
+		// (CardDef.EffectId=OnDeathDamageFace1、死亡処理時にFindCard経由で
+		// 参照される。docs/next-ruleset-cards-v1.md「赤」参照)。
+		for (int32 i = 0; i < Def.EffectValue; ++i)
+		{
+			Self.AddBoardUnitDirect(FName(TEXT("TK_EMBER")), 0, 1, false, false);
+		}
+	}
+
 	void Handle_GrantPurchaseMana(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
-		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // O01 目利きの一手(Spell版。EffectValue=増加量)
+		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // O01 風の相場(Spell版。EffectValue=増加量)
 	{
 		Self.PurchaseMana += Def.EffectValue;
 	}
 
 	void Handle_ReturnGraveyardSpellSelfDamage1(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
-		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // C021 墓地再点火
+		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // C021 結晶に灯る記憶
 	{
 		// どの墓地Spellを手札へ戻すかはプレイヤー(またはAI)が選ぶ
 		// (docs/architecture.md「選択待ち(PendingChoice)の仕組み」)。
@@ -216,7 +245,7 @@ namespace
 	}
 
 	// マーケットから1枚、コストを支払わず手札へ加える選択を開始する共通処理
-	// (C022市場調達/O07即断の商談で共有)。MaxCostは-1で無条件。
+	// (C022廃墟に転がる戦利品/O07買い付けで共有)。MaxCostは-1で無条件。
 	void BeginFreeMarketFetchChoice(ACGPlayerState& Self, ACGGameState* CGState, int32 MaxCost)
 	{
 		if (!CGState || Self.HandCardIds.Num() >= 10)
@@ -250,7 +279,7 @@ namespace
 
 
 	void Handle_BuyFromMarketCostUnder3ToHand(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
-		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // C022 市場調達/O07 即断の商談(EffectValue=コスト上限)
+		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // C022 廃墟に転がる戦利品/O07 買い付け(EffectValue=コスト上限)
 	{
 		// どのマーケットカードを手札へ加えるかはプレイヤー(またはAI)が選ぶ
 		// (docs/architecture.md「選択待ち(PendingChoice)の仕組み」)。
@@ -274,7 +303,7 @@ namespace
 	}
 
 	void Handle_RandomEnemyDamage1x4(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
-		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // C023 連弾の雨
+		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // C023 結晶が弾く雨
 	{
 		if (!Opponent)
 		{
@@ -295,7 +324,7 @@ namespace
 	}
 
 	void Handle_ConditionalDamage3or2(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
-		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // C024 逆転の号令
+		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // C024 土壇場の号令
 	{
 		// どの敵ユニット/顔面へダメージを与えるかはプレイヤー(またはAI)が選ぶ
 		// (docs/architecture.md「選択待ち(PendingChoice)の仕組み」)。
@@ -313,7 +342,7 @@ namespace
 		CGState->PendingChoice = Choice;
 	}
 
-	// 封印(青、次期ルール)の対象候補が1体でもいるか(条件に合わなければ選択自体を
+	// 断罪(青、次期ルール)の対象候補が1体でもいるか(条件に合わなければ選択自体を
 	// 始めない。既存のHasGraveyardCandidateと同じ考え方)。
 	bool HasSealCandidate(const ACGPlayerState& Opponent, int32 MaxCost)
 	{
@@ -346,9 +375,9 @@ namespace
 		return false;
 	}
 
-	// 封印(青)の選択待ちを開始する共通処理。MaxCostは-1で無条件
+	// 断罪(青)の選択待ちを開始する共通処理。MaxCostは-1で無条件
 	// (docs/game-rules-minimum.md「青」、ECGChoiceType::EnemyUnitTarget)。EffectIdMarkerは
-	// ACGGameMode::ResolvePendingChoiceSealTargetが封印成立後の追加処理(B09の購入用
+	// ACGGameMode::ResolvePendingChoiceSealTargetが断罪成立後の追加処理(B09の購入用
 	// マナ付与、B15の2体目選択)を分岐するために使う(既定はSealSpellで追加処理無し)。
 	// bFilterByCurrentAtkがtrueのとき(B11/B13)、MaxCostは「現在の攻撃力の上限」として
 	// 扱われる(FCGPendingChoice::bFilterByCurrentAtk参照)。
@@ -367,13 +396,13 @@ namespace
 		Choice.bFilterByCurrentAtk = bFilterByCurrentAtk;
 		const TCHAR* FilterLabel = bFilterByCurrentAtk ? TEXT("攻撃力") : TEXT("コスト");
 		Choice.PromptText = (MaxCost >= 0)
-			? FString::Printf(TEXT("封印する敵ユニットを選んでください(%s%d以下)"), FilterLabel, MaxCost)
-			: TEXT("封印する敵ユニットを選んでください");
+			? FString::Printf(TEXT("断罪する敵ユニットを選んでください(%s%d以下)"), FilterLabel, MaxCost)
+			: TEXT("断罪する敵ユニットを選んでください");
 		CGState->PendingChoice = Choice;
 	}
 
 	void Handle_SealSpell(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
-		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // 青: 封印(Spell版。EffectValue=コスト上限、-1で無条件)
+		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // 青: 断罪(Spell版。EffectValue=コスト上限、-1で無条件)
 	{
 		if (!Opponent || !HasSealCandidate(*Opponent, Def.EffectValue))
 		{
@@ -382,11 +411,21 @@ namespace
 		BeginSealChoice(Self, CGState, Def.EffectValue);
 	}
 
+	void Handle_SealSpellByPower(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
+		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // B01 封書の術(Spell版。コストではなく現在の攻撃力(パワー)で判定。EffectValue=攻撃力上限)
+	{
+		if (!Opponent || !HasSealCandidateByPower(*Opponent, Def.EffectValue))
+		{
+			return;
+		}
+		BeginSealChoice(Self, CGState, Def.EffectValue, FName(CGEffectId::SealSpell), /*bFilterByCurrentAtk=*/true);
+	}
+
 	void Handle_SealSpellGrantPurchaseMana(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
 		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // B09 叡智の追放(EffectValue=コスト上限、-1で無条件)
 	{
 		// コインの付与はACGGameMode::ResolvePendingChoiceSealTargetが、
-		// この選択(SealSpellGrantPurchaseMana)の封印成立を確認してから行う
+		// この選択(SealSpellGrantPurchaseMana)の断罪成立を確認してから行う
 		// (対象がいない=選択自体が始まらない場合は付与しない)。
 		if (!Opponent || !HasSealCandidate(*Opponent, Def.EffectValue))
 		{
@@ -399,7 +438,7 @@ namespace
 		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // B15 双つの追放
 	{
 		// 2体目の選択はACGGameMode::ResolvePendingChoiceSealTargetが、1体目の
-		// 封印成立後に対象が残っていれば自動で開始する。
+		// 断罪成立後に対象が残っていれば自動で開始する。
 		if (!Opponent || !HasSealCandidate(*Opponent, -1))
 		{
 			return;
@@ -425,7 +464,7 @@ namespace
 	}
 
 	void Handle_BuffAllyTargetAndDraw(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
-		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // P10 深淵の契約(強化後に1ドロー)
+		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // P10 秘宝の授与(強化後に1ドロー)
 	{
 		if (!CGState || Self.BoardUnits.Num() == 0)
 		{
@@ -441,7 +480,7 @@ namespace
 	}
 
 	void Handle_OnPlayDamageFaceSpell(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
-		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // 赤: 選択不要の直接顔面ダメージ(Spell版。R08業火の一撃)
+		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // 赤: 選択不要の直接顔面ダメージ(Spell版。R08赤熱の一閃)
 	{
 		if (Opponent)
 		{
@@ -450,7 +489,7 @@ namespace
 	}
 
 	void Handle_RandomEnemyDamage2x3(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
-		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // R11 業火の乱舞
+		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // R11 廃墟の剣戟
 	{
 		if (!Opponent)
 		{
@@ -471,7 +510,7 @@ namespace
 	}
 
 	void Handle_DamageFaceByUnitCount(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
-		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // R14 総攻めの狼煙
+		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // R14 決闘状
 	{
 		if (Opponent)
 		{
@@ -480,7 +519,7 @@ namespace
 	}
 
 	void Handle_MassDebuffEnemies(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
-		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // B12 氷結の嵐(EffectValue=Atk/Hp減少量)
+		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // B12 禁書一斉開帳(EffectValue=Atk/Hp減少量)
 	{
 		if (!Opponent)
 		{
@@ -506,7 +545,7 @@ namespace
 	}
 
 	void Handle_BuffAllAlliesFlat(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
-		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // G14 大地の祝福(EffectValue分だけAtk/Hp共に増加)
+		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // G14 世界樹の加護(EffectValue分だけAtk/Hp共に増加)
 	{
 		for (FCGBoardUnit& Unit : Self.BoardUnits)
 		{
@@ -516,7 +555,7 @@ namespace
 	}
 
 	void Handle_BuffAllAlliesAtkOnly(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
-		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // G08 森の恵み(EffectValue分だけAtkのみ増加)
+		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // G08 祈りの輪(EffectValue分だけAtkのみ増加)
 	{
 		for (FCGBoardUnit& Unit : Self.BoardUnits)
 		{
@@ -525,7 +564,7 @@ namespace
 	}
 
 	void Handle_ForceTransformAllAllies(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def,
-		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // P13 解放の詠唱
+		int32 TargetUnitIndex, ACGGameState* CGState, int32 FirstSpellDamageBonus) // P13 玉座の噂
 	{
 		Self.ForceTransformAll(Opponent, CGState);
 	}
@@ -534,17 +573,20 @@ namespace
 	{
 		static const TMap<FName, FSpellEffectHandler> Handlers = {
 			{ FName(CGEffectId::OnPlayDamageTarget), &Handle_OnPlayDamageTarget },
+			{ FName(CGEffectId::OnPlayDamageUnitTarget), &Handle_OnPlayDamageUnitTargetSpell },
 			{ FName(CGEffectId::OnPlayDamageTargetByAllyUnitCount), &Handle_OnPlayDamageTargetByAllyUnitCount },
 			{ FName(CGEffectId::OnPlayHealSelf), &Handle_OnPlayHealSelf },
 			{ FName(CGEffectId::Discard1Draw2), &Handle_Discard1Draw2 },
 			{ FName(CGEffectId::SummonApprenticeTokens), &Handle_SummonApprenticeTokens },
 			{ FName(CGEffectId::SummonToughApprenticeTokens), &Handle_SummonToughApprenticeTokens },
+			{ FName(CGEffectId::SummonEmberTokens), &Handle_SummonEmberTokens },
 			{ FName(CGEffectId::ReturnGraveyardSpellSelfDamage1), &Handle_ReturnGraveyardSpellSelfDamage1 },
 			{ FName(CGEffectId::BuyFromMarketCostUnder3ToHand), &Handle_BuyFromMarketCostUnder3ToHand },
 			{ FName(CGEffectId::RerollMarketSlot), &Handle_RerollMarketSlotSpell },
 			{ FName(CGEffectId::RandomEnemyDamage1x4), &Handle_RandomEnemyDamage1x4 },
 			{ FName(CGEffectId::ConditionalDamage3or2), &Handle_ConditionalDamage3or2 },
 			{ FName(CGEffectId::SealSpell), &Handle_SealSpell },
+			{ FName(CGEffectId::SealSpellByPower), &Handle_SealSpellByPower },
 			{ FName(CGEffectId::SealSpellGrantPurchaseMana), &Handle_SealSpellGrantPurchaseMana },
 			{ FName(CGEffectId::SealSpellTwo), &Handle_SealSpellTwo },
 			{ FName(CGEffectId::GrantPurchaseMana), &Handle_GrantPurchaseMana },
@@ -565,7 +607,7 @@ namespace
 
 	// --- Unit登場時効果ハンドラ ---
 
-	void Handle_OnPlayDiscard1(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState) // C008 錆びた巨兵
+	void Handle_OnPlayDiscard1(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState) // C008 錆びた黒鉄の巨兵
 	{
 		// どのカードを捨てるかはプレイヤー(またはAI)が選ぶ
 		// (docs/architecture.md「選択待ち(PendingChoice)の仕組み」)。
@@ -581,7 +623,7 @@ namespace
 		CGState->PendingChoice = Choice;
 	}
 
-	void Handle_OnPlayReturnGraveyardCheapCard(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState) // C011 再誕の司祭
+	void Handle_OnPlayReturnGraveyardCheapCard(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState) // C011 廃墟の蘇生司祭
 	{
 		// どの墓地カードを手札へ戻すかはプレイヤー(またはAI)が選ぶ
 		// (docs/architecture.md「選択待ち(PendingChoice)の仕組み」)。
@@ -598,7 +640,7 @@ namespace
 		CGState->PendingChoice = Choice;
 	}
 
-	void Handle_GraveyardToDeckBottomDraw1(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState) // C006 墓場あさり
+	void Handle_GraveyardToDeckBottomDraw1(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState) // C006 廃墟あさりの拾い屋
 	{
 		// どの墓地カードを山札下へ送るかはプレイヤー(またはAI)が選ぶ
 		// (docs/architecture.md「選択待ち(PendingChoice)の仕組み」)。
@@ -615,7 +657,7 @@ namespace
 		Self.DrawCard();
 	}
 
-	void Handle_ScoutTop1(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState) // C001 先駆けの斥候
+	void Handle_ScoutTop1(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState) // C001 廃墟を渡る斥候
 	{
 		// 山札の一番上を見せて、上に残すか下に送るかはプレイヤー(またはAI)が選ぶ
 		// (docs/architecture.md「選択待ち(PendingChoice)の仕組み」)。
@@ -632,7 +674,7 @@ namespace
 		CGState->PendingChoice = Choice;
 	}
 
-	void Handle_SealOnPlay(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState) // 青: 封印(Unit登場時版。EffectValue=コスト上限、-1で無条件)
+	void Handle_SealOnPlay(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState) // 青: 断罪(Unit登場時版。EffectValue=コスト上限、-1で無条件)
 	{
 		if (!Opponent || !HasSealCandidate(*Opponent, Def.EffectValue))
 		{
@@ -641,7 +683,7 @@ namespace
 		BeginSealChoice(Self, CGState, Def.EffectValue);
 	}
 
-	void Handle_SealOnPlayByPower(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState) // 青: 封印(Unit登場時版、現在の攻撃力で判定。EffectValue=攻撃力上限。B11/B13)
+	void Handle_SealOnPlayByPower(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState) // 青: 断罪(Unit登場時版、現在の攻撃力で判定。EffectValue=攻撃力上限。B11/B13)
 	{
 		if (!Opponent || !HasSealCandidateByPower(*Opponent, Def.EffectValue))
 		{
@@ -650,7 +692,7 @@ namespace
 		BeginSealChoice(Self, CGState, Def.EffectValue, FName(CGEffectId::SealSpell), /*bFilterByCurrentAtk=*/true);
 	}
 
-	void Handle_OnPlayGrantPurchaseMana(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState) // O09 大商人の護衛(EffectValue=増加量)
+	void Handle_OnPlayGrantPurchaseMana(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState) // O09 船団長グラナ(EffectValue=増加量)
 	{
 		Self.PurchaseMana += Def.EffectValue;
 	}
@@ -697,10 +739,10 @@ namespace
 		CGState->PendingChoice = Choice;
 	}
 
-	void Handle_OnPlayBuffAllyTargetAndUnitDiscount(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState) // P14 調和の賢者
+	void Handle_OnPlayBuffAllyTargetAndUnitDiscount(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState) // P14 宮廷の采配官
 	{
 		// 「手札の変貌前Unit1体のコストを1軽減」は、同名重複カードを区別する仕組みが
-		// 無いため、P11予見の魔導師と同じ簡略化方針で「次にプレイするUnitを割引する」
+		// 無いため、P11取り次ぎの女官と同じ簡略化方針で「次にプレイするUnitを割引する」
 		// (NextUnitPlayDiscount)に置き換えている。
 		Self.NextUnitPlayDiscount += 1;
 		if (!CGState || Self.BoardUnits.Num() == 0)
@@ -722,6 +764,22 @@ namespace
 		{
 			Opponent->ApplyDamage(Def.EffectValue);
 		}
+	}
+
+	void Handle_OnPlayDamageUnitTargetUnit(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState) // R10 灼熱の一番槍(敵Unit限定、顔面は選べない)
+	{
+		if (!Opponent || !CGState)
+		{
+			return;
+		}
+		FCGPendingChoice Choice;
+		Choice.ChoiceType = ECGChoiceType::EnemyOrFaceTarget;
+		Choice.SideIndex = Self.SideIndex;
+		Choice.EffectId = FName(CGEffectId::OnPlayDamageUnitTarget);
+		Choice.PendingDamageAmount = Def.EffectValue;
+		Choice.bRequireUnitTarget = true;
+		Choice.PromptText = TEXT("ダメージを与える敵Unitを選んでください");
+		CGState->PendingChoice = Choice;
 	}
 
 	void Handle_OnPlayHealSelfUnit(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState) // 緑: 登場時に味方リーダーを回復(Unit登場時版。G06/G15)
@@ -771,7 +829,7 @@ namespace
 		Self.BoardUnits.Last().Atk += Def.EffectValue;
 	}
 
-	void Handle_OnPlayRerollMarketRandom(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState) // O11 市場の目付役
+	void Handle_OnPlayRerollMarketRandom(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState) // O11 先物師の元締め
 	{
 		// 次の購入の割引はDef.HasTag("Discount")からACGPlayerState::PlayCardFromHandが
 		// 別途付与するため、ここではマーケットの補充のみ行う(「好きな枠」を選べる
@@ -782,12 +840,12 @@ namespace
 		}
 	}
 
-	void Handle_OnPlayDeployFromMarketFree(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState) // O15 独占商人(EffectValue=-1でコスト上限なし)
+	void Handle_OnPlayDeployFromMarketFree(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState) // O15 黒鉄の買い占め屋(EffectValue=-1でコスト上限なし)
 	{
 		Self.BeginMarketDeployChoice(CGState, Def.EffectValue, 0);
 	}
 
-	void Handle_OnPlayGrantNextUnitPlayDiscount(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState) // P11 予見の魔導師
+	void Handle_OnPlayGrantNextUnitPlayDiscount(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState) // P11 取り次ぎの女官
 	{
 		Self.NextUnitPlayDiscount += Def.EffectValue;
 	}
@@ -796,7 +854,7 @@ namespace
 
 	void Handle_OnPlayFreeMarketCards(ACGPlayerState& Self, const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState) // 橙フィニッシャー(EffectValue=枚数)
 	{
-		// O15独占商人と同じ「マーケットのUnitを1枚選び、コストを支払わずそのまま
+		// O15黒鉄の買い占め屋と同じ「マーケットのUnitを1枚選び、コストを支払わずそのまま
 		// 場に出す」選択(BeginMarketDeployChoice)を、EffectValue回連続で行う
 		// (「黄色のフィニッシャーはプレイヤーがマーケットのカードを選択して無料で
 		// プレイできるカードを選びたい」というフィードバックへの対応。以前は
@@ -844,6 +902,7 @@ namespace
 			{ FName(CGEffectId::OnPlayBuffAllyTargetAndUnitDiscount), &Handle_OnPlayBuffAllyTargetAndUnitDiscount },
 			{ FName(CGEffectId::OnPlayForceTransformAllyTarget), &Handle_OnPlayForceTransformAllyTarget },
 			{ FName(CGEffectId::OnPlayDamageFace), &Handle_OnPlayDamageFaceUnit },
+			{ FName(CGEffectId::OnPlayDamageUnitTarget), &Handle_OnPlayDamageUnitTargetUnit },
 			{ FName(CGEffectId::OnPlayHealSelf), &Handle_OnPlayHealSelfUnit },
 			{ FName(CGEffectId::OnPlayDebuffTarget), &Handle_OnPlayDebuffTarget },
 			{ FName(CGEffectId::OnPlayBuffSelfIfAlliesPresent), &Handle_OnPlayBuffSelfIfAlliesPresent },
@@ -862,9 +921,9 @@ namespace
 
 	// 場のUnitの中で最もコストが高いものの場インデックスを返す(無ければ-1)。
 	// 変貌済みでも判定は変貌前のカードのコストで行う(SealUnit()等と揃える)。
-	// B10(ターン終了時デバフ)/B14(ターン開始時封印)が対象を自動選定するのに使う。
+	// B10(ターン終了時デバフ)/B14(ターン開始時断罪)が対象を自動選定するのに使う。
 	// MaxCost(-1で無条件)は、B14終焉の裁定者のナーフ用: 無条件だと毎ターン
-	// 相手の最高コストUnitを無料で封印し続けられて強すぎたため、コスト上限を
+	// 相手の最高コストUnitを無料で断罪し続けられて強すぎたため、コスト上限を
 	// 設けられるようにしている(docs/game-rules-minimum.md「青」ナーフ経緯参照)。
 	int32 FindHighestCostBoardUnitIndex(const ACGPlayerState& Side, int32 MaxCost = -1)
 	{
@@ -890,12 +949,17 @@ namespace
 		OutDrawCount += Def.EffectValue;
 	}
 
-	void Handle_OnDeathReturnRandomGraveyardUnit(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def, int32& OutDrawCount) // C014 霊廟の守り手
+	void Handle_OnDeathGrantPurchaseMana(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def, int32& OutDrawCount) // R03/R04/R07/R13相当
+	{
+		Self.PurchaseMana += Def.EffectValue;
+	}
+
+	void Handle_OnDeathReturnRandomGraveyardUnit(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def, int32& OutDrawCount) // C014 廃墟の霊廟守り
 	{
 		Self.TryMoveRandomDiscardUnitToDeckTop();
 	}
 
-	void Handle_OnDeathDamageFace1(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def, int32& OutDrawCount) // R06 自爆の火薬兵
+	void Handle_OnDeathDamageFace1(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def, int32& OutDrawCount) // R06 捨て身の道場破り
 	{
 		if (Opponent)
 		{
@@ -903,7 +967,7 @@ namespace
 		}
 	}
 
-	void Handle_OnDeathDamageRandomEnemyUnit1(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def, int32& OutDrawCount) // R01 火口の悪童
+	void Handle_OnDeathDamageRandomEnemyUnit1(ACGPlayerState& Self, ACGPlayerState* Opponent, const FCGCardDef& Def, int32& OutDrawCount) // R01 黒鉄拾いの悪童
 	{
 		if (Opponent && Opponent->BoardUnits.Num() > 0)
 		{
@@ -919,18 +983,19 @@ namespace
 			{ FName(CGEffectId::OnDeathReturnRandomGraveyardUnit), &Handle_OnDeathReturnRandomGraveyardUnit },
 			{ FName(CGEffectId::OnDeathDamageFace1), &Handle_OnDeathDamageFace1 },
 			{ FName(CGEffectId::OnDeathDamageRandomEnemyUnit1), &Handle_OnDeathDamageRandomEnemyUnit1 },
+			{ FName(CGEffectId::OnDeathGrantPurchaseMana), &Handle_OnDeathGrantPurchaseMana },
 		};
 		return Handlers;
 	}
 
 	// --- ターン終了時の常在効果ハンドラ(場にそのEffectIdを持つUnitがいれば発動) ---
-	// 市場の仲買人(OnBuyEndTurnDiscardDraw、C007)は「どのカードを捨てるか」を
+	// 荒野の行商人(OnBuyEndTurnDiscardDraw、C007)は「どのカードを捨てるか」を
 	// プレイヤーが選ぶ必要があり、かつターン終了そのものを選択完了まで保留する
 	// 必要があるため、この一般的なハンドラテーブルではなく
 	// ACGGameMode::RequestEndTurn()側で個別に処理している
 	// (docs/architecture.md「選択待ち(PendingChoice)の仕組み」参照)。
 
-	void Handle_OnBuyEndTurnGrantPurchaseMana(ACGPlayerState& Self, ACGPlayerState* Opponent) // O12 豪商の後継者
+	void Handle_OnBuyEndTurnGrantPurchaseMana(ACGPlayerState& Self, ACGPlayerState* Opponent) // O12 錨を抱く老船長
 	{
 		if (Self.bBoughtThisTurn)
 		{
@@ -956,7 +1021,7 @@ namespace
 		return false;
 	}
 
-	void Handle_EndTurnDebuffHighestCostEnemy(ACGPlayerState& Self, ACGPlayerState* Opponent) // B10 衰弱の監視者
+	void Handle_EndTurnDebuffHighestCostEnemy(ACGPlayerState& Self, ACGPlayerState* Opponent) // B10 弱点の考察官
 	{
 		FCGCardDef Def;
 		if (!Opponent || !FindBoardUnitDefWithEffect(Self, FName(CGEffectId::EndTurnDebuffHighestCostEnemy), Def))
@@ -1035,7 +1100,7 @@ FName ACGPlayerState::PopTopOfDeckWithReshuffle()
 	{
 		if (DiscardCardIds.Num() == 0)
 		{
-			// 捨て札も尽きている(封印等で持ち札の大半を失った極端なケース)。
+			// 捨て札も尽きている(断罪等で持ち札の大半を失った極端なケース)。
 			// リシャッフルする材料が無いため、これ以上は取り出せない。
 			return NAME_None;
 		}
@@ -1114,7 +1179,14 @@ bool ACGPlayerState::PlayCardFromHand(FName CardId, ACGPlayerState* Opponent, in
 		return false;
 	}
 
-	// P11予見の魔導師: 次にプレイするUnit1体のコスト軽減(Spellには適用しない)。
+	// 生け贄(Sacrifice、R15黒鉄を継ぐ大剣士): 道連れにする自分のUnitが1体も
+	// いなければそもそもプレイできない(docs/keywords.md「生け贄(Sacrifice)」参照)。
+	if (Def.HasTag(TEXT("Sacrifice")) && BoardUnits.Num() == 0)
+	{
+		return false;
+	}
+
+	// P11取り次ぎの女官: 次にプレイするUnit1体のコスト軽減(Spellには適用しない)。
 	// docs/architecture.md「次期ルール移行時の実装メモ」参照。
 	const bool bApplyUnitPlayDiscount = (Def.CardType == ECGCardType::Unit) && NextUnitPlayDiscount > 0;
 	const int32 EffectiveCost = bApplyUnitPlayDiscount ? FMath::Max(1, Def.Cost - NextUnitPlayDiscount) : Def.Cost;
@@ -1132,7 +1204,7 @@ bool ACGPlayerState::PlayCardFromHand(FName CardId, ACGPlayerState* Opponent, in
 	}
 	CardsPlayedThisMatch.Add(CardId);
 
-	// 街道の突撃兵(C009)判定用: このカードが「今ターン2枚目以降」かどうかを、
+	// 廃墟街道の突撃兵(C009)判定用: このカードが「今ターン2枚目以降」かどうかを、
 	// カウンタをインクリメントする前に確定させる。
 	const bool bIsSecondOrLaterPlayThisTurn = (CardsPlayedThisTurn >= 1);
 	CardsPlayedThisTurn++;
@@ -1147,52 +1219,28 @@ bool ACGPlayerState::PlayCardFromHand(FName CardId, ACGPlayerState* Opponent, in
 
 	if (Def.CardType == ECGCardType::Unit)
 	{
-		int32 EnterAtk = Def.Atk;
-		if (Def.EffectId == FName(CGEffectId::SecondPlayBuff) && bIsSecondOrLaterPlayThisTurn) // C009 街道の突撃兵/R09 連携の火術師
+		// 生け贄(Sacrifice、R07/R13/R15): 道連れにする味方Unitをプレイヤー
+		// (またはAI)に選ばせる(docs/keywords.md「生け贄(Sacrifice)」)。
+		// この関数の先頭でBoardUnits.Num()==0なら既に弾いているため、ここでは
+		// 必ず候補が1体以上いる。選択が解決するまでこのUnit自身は場に出さず、
+		// Choice.RevealedCardIdに控えておいたCardIdをACGGameMode::
+		// ResolvePendingChoiceAllyTarget側でSpawnUnitFromHandOnBoard()に渡して
+		// 実際に場へ出す(SecondPlayBuff等、bIsSecondOrLaterPlayThisTurnに
+		// 依存する効果は現状どの生け贄持ちカードも持たないため、選択解決後は
+		// falseとして扱ってよい)。
+		if (Def.HasTag(TEXT("Sacrifice")))
 		{
-			EnterAtk += Def.EffectValue;
+			FCGPendingChoice Choice;
+			Choice.ChoiceType = ECGChoiceType::AllyUnitTarget;
+			Choice.SideIndex = SideIndex;
+			Choice.EffectId = FName(CGEffectId::SacrificeAllyOnPlay);
+			Choice.RevealedCardId = CardId;
+			Choice.PromptText = TEXT("生け贄にする味方Unitを選んでください");
+			CGState->PendingChoice = Choice;
+			return true;
 		}
 
-		FCGBoardUnit NewUnit;
-		NewUnit.CardId = CardId;
-		NewUnit.Atk = EnterAtk;
-		NewUnit.Hp = Def.Hp;
-		NewUnit.bCanAttack = Def.HasTag(TEXT("Haste"));
-		NewUnit.bHasGuard = Def.HasTag(TEXT("Guard"));
-		BoardUnits.Add(NewUnit);
-
-		// 紫フィニッシャーの常在アウラ: このユニットが場にいる限り、新たに登場した
-		// 味方Unitは変貌条件を無視して即座に変貌する。ForceTransformAll()は既に
-		// 変貌済み/変貌先を持たないUnitには何もしないため、毎回呼んでも安全
-		// (「このユニットがいる限り味方のすべてのユニットは登場時に即座に変貌する」
-		// というフィードバックへの対応)。
-		if (HasBoardUnitWithEffect(FName(CGEffectId::FinisherTransformAura)))
-		{
-			ForceTransformAll(Opponent, CGState);
-		}
-
-		// 先物(橙、Discountタグ): 登場時、コインを1増やす。専用のEffectIdを
-		// 持たせず、タグから直接付与することで複数のカード(O02/O03/O06/O11/O14)が
-		// 同じ効果を共有できるようにしている(以前は「次の購入コストを1軽減」
-		// だったが、「先物のキーワード効果をコイン付与にしてほしい」という
-		// フィードバックで変更した。docs/keywords.md「先物」参照)。
-		if (Def.HasTag(TEXT("Discount")))
-		{
-			PurchaseMana += 1;
-		}
-
-		ResolveUnitOnPlayEffect(Def, Opponent, CGState);
-
-		if (Def.EffectId == FName(CGEffectId::AllyBuffAtkThisTurn)) // C013 戦場の旗手
-		{
-			// 簡易実装: 本来は「ターン中のみ」の一時バフだが、一時バフ管理の仕組みを
-			// 新設するコストを避けるため、登場時点にいる味方(このユニット自身を除く)へ
-			// 永続的に+1/+0を付与する形に簡略化している(docs/game-rules-minimum.md「未実装・今後の検討事項」参照)。
-			for (int32 i = 0; i < BoardUnits.Num() - 1; ++i)
-			{
-				BoardUnits[i].Atk += 1;
-			}
-		}
+		SpawnUnitFromHandOnBoard(CardId, Def, bIsSecondOrLaterPlayThisTurn, Opponent, CGState);
 	}
 	else
 	{
@@ -1200,7 +1248,7 @@ bool ACGPlayerState::PlayCardFromHand(FName CardId, ACGPlayerState* Opponent, in
 		ResolveSpellEffect(Def, Opponent, TargetUnitIndex, CGState);
 		DiscardCardIds.Add(CardId);
 
-		// 追撃の射手(C010): 味方Spell使用時、1ターンに1回だけ敵リーダーへ1ダメージ。
+		// 結晶の谺を読む射手(C010): 味方Spell使用時、1ターンに1回だけ敵リーダーへ1ダメージ。
 		if (Opponent && !bAllySpellPingUsedThisTurn && HasBoardUnitWithEffect(FName(CGEffectId::OnAllySpellPing1)))
 		{
 			Opponent->ApplyDamage(1);
@@ -1211,9 +1259,66 @@ bool ACGPlayerState::PlayCardFromHand(FName CardId, ACGPlayerState* Opponent, in
 	return true;
 }
 
+void ACGPlayerState::SpawnUnitFromHandOnBoard(FName CardId, const FCGCardDef& Def, bool bIsSecondOrLaterPlayThisTurn, ACGPlayerState* Opponent, ACGGameState* CGState)
+{
+	int32 EnterAtk = Def.Atk;
+	if (Def.EffectId == FName(CGEffectId::SecondPlayBuff) && bIsSecondOrLaterPlayThisTurn) // C009 廃墟街道の突撃兵/R09 連携の立会人
+	{
+		EnterAtk += Def.EffectValue;
+	}
+
+	FCGBoardUnit NewUnit;
+	NewUnit.CardId = CardId;
+	NewUnit.Atk = EnterAtk;
+	NewUnit.Hp = Def.Hp;
+	NewUnit.bCanAttack = Def.HasTag(TEXT("Haste"));
+	NewUnit.bHasGuard = Def.HasTag(TEXT("Guard"));
+	BoardUnits.Add(NewUnit);
+
+	// 「分身のキーワードの条件をプレイしたときに達成していることにしてほしい」
+	// というフィードバックへの対応。分身条件(特にAllyUnitCountAtLeast/
+	// LeaderHpAtMostのような「状態」条件)は、このユニット自身がプレイされた
+	// 時点で既に満たされていることがあるため、この後のNotifyStateChanged経由の
+	// CheckAllClones(盤面全体の再判定)を待たず、ここで明示的に即座判定する。
+	ApplyCloneIfConditionMet(BoardUnits.Last(), Opponent, CGState);
+
+	// 紫フィニッシャーの常在アウラ: このユニットが場にいる限り、新たに登場した
+	// 味方Unitは変貌条件を無視して即座に変貌する。ForceTransformAll()は既に
+	// 変貌済み/変貌先を持たないUnitには何もしないため、毎回呼んでも安全
+	// (「このユニットがいる限り味方のすべてのユニットは登場時に即座に変貌する」
+	// というフィードバックへの対応)。
+	if (HasBoardUnitWithEffect(FName(CGEffectId::FinisherTransformAura)))
+	{
+		ForceTransformAll(Opponent, CGState);
+	}
+
+	// 先物(橙、Discountタグ): 登場時、コインを1増やす。専用のEffectIdを
+	// 持たせず、タグから直接付与することで複数のカード(O02/O03/O06/O11/O14)が
+	// 同じ効果を共有できるようにしている(以前は「次の購入コストを1軽減」
+	// だったが、「先物のキーワード効果をコイン付与にしてほしい」という
+	// フィードバックで変更した。docs/keywords.md「先物」参照)。
+	if (Def.HasTag(TEXT("Discount")))
+	{
+		PurchaseMana += 1;
+	}
+
+	ResolveUnitOnPlayEffect(Def, Opponent, CGState);
+
+	if (Def.EffectId == FName(CGEffectId::AllyBuffAtkThisTurn)) // C013 国無き旗手
+	{
+		// 簡易実装: 本来は「ターン中のみ」の一時バフだが、一時バフ管理の仕組みを
+		// 新設するコストを避けるため、登場時点にいる味方(このユニット自身を除く)へ
+		// 永続的に+1/+0を付与する形に簡略化している(docs/game-rules-minimum.md「未実装・今後の検討事項」参照)。
+		for (int32 i = 0; i < BoardUnits.Num() - 1; ++i)
+		{
+			BoardUnits[i].Atk += 1;
+		}
+	}
+}
+
 void ACGPlayerState::ResolveSpellEffect(const FCGCardDef& Def, ACGPlayerState* Opponent, int32 TargetUnitIndex, ACGGameState* CGState)
 {
-	// 連鎖術の教授(C016)判定用: このSpellが「今ターン最初のSpell」かどうか
+	// 第六界を記す学者(C016)判定用: このSpellが「今ターン最初のSpell」かどうか
 	// (呼び出し元でSpellsPlayedThisTurnをインクリメント済みのため、1なら初回)。
 	const int32 FirstSpellDamageBonus =
 		(SpellsPlayedThisTurn == 1 && HasBoardUnitWithEffect(FName(CGEffectId::FirstSpellBonusDamage))) ? 1 : 0;
@@ -1228,6 +1333,14 @@ void ACGPlayerState::ResolveSpellEffect(const FCGCardDef& Def, ACGPlayerState* O
 
 void ACGPlayerState::ResolveUnitOnPlayEffect(const FCGCardDef& Def, ACGPlayerState* Opponent, ACGGameState* CGState)
 {
+	// B06「深淵の封印」: 相手の場にこのユニットがいる限り、自分のUnitの能力は
+	// 発動しない(登場時効果。分身のコピー・変貌先カードの登場時効果もこの
+	// 関数を経由するため、まとめて抑制される。docs/next-ruleset-cards-v1.md
+	// 「青」参照)。
+	if (AreUnitAbilitiesSuppressedByEnemy(Opponent))
+	{
+		return;
+	}
 	if (const FUnitOnPlayEffectHandler* Handler = GetUnitOnPlayEffectHandlers().Find(Def.EffectId))
 	{
 		(*Handler)(*this, Def, Opponent, CGState);
@@ -1385,10 +1498,13 @@ bool ACGPlayerState::BuyCard(FName CardId)
 	bBoughtThisTurn = true;
 	++CardsPurchasedThisMatch; // フィニッシャー(橙): マーケットから10枚購入
 
-	// 値切りの番人(O05)/市場の守り主(O14、次期ルール): 自分が購入するたび、
-	// この効果を持つ自分の場のユニットを強化する(常在効果)。「このターン中のみ」
-	// という原設計は、戦場の旗手(C013)と同じ簡略化方針(docs/architecture.md)に
-	// 合わせて永続強化にしている。
+	// 市場の設営係(O05)/増強(Reinforceキーワード、O14/O17): 自分が購入するたび、
+	// この効果・キーワードを持つ自分の場のユニットを強化する(常在効果)。
+	// 「このターン中のみ」という原設計は、国無き旗手(C013)と同じ簡略化方針
+	// (docs/architecture.md)に合わせて永続強化にしている。増強はO14専用の
+	// 固定EffectIdだったものを、複数カードに配布しやすい汎用キーワードへ
+	// 一般化したもの(docs/keywords.md「増強(Reinforce)」参照。「橙に新しい
+	// キーワードを追加して改善したい」というフィードバックへの対応)。
 	for (FCGBoardUnit& Unit : BoardUnits)
 	{
 		FCGCardDef UnitDef;
@@ -1400,9 +1516,9 @@ bool ACGPlayerState::BuyCard(FName CardId)
 		{
 			Unit.Atk += UnitDef.EffectValue;
 		}
-		else if (UnitDef.EffectId == FName(CGEffectId::OnBuyBuffSelfHp))
+		else if (UnitDef.HasTag(TEXT("Reinforce")))
 		{
-			Unit.Hp += UnitDef.EffectValue;
+			Unit.Hp += 1;
 		}
 	}
 
@@ -1421,7 +1537,7 @@ bool ACGPlayerState::BuyCard(FName CardId)
 int32 ACGPlayerState::ComputeCurrentPurchaseDiscount() const
 {
 	int32 Discount = 0;
-	// 市場監督官(C012)が場にいる間。
+	// 荒野の物々交換人(C012)が場にいる間。
 	if (HasBoardUnitWithEffect(FName(CGEffectId::BuyCostReductionThisTurn)))
 	{
 		Discount += 1;
@@ -1480,7 +1596,23 @@ int32 ACGPlayerState::RemoveDeadUnitsAndGetDeathDrawCount(ACGPlayerState* Oppone
 		BoardUnits.RemoveAt(i);
 		++AlliesDiedThisMatch; // フィニッシャー(赤): 味方Unitが10体死亡
 
-		if (bFound)
+		// 常在アウラ: 場のUnitが1体死亡するたび(自分・相手どちらの死亡でも)、
+		// アウラを持つ側が敵リーダーへ1ダメージ。死んだユニット自身がアウラの
+		// 持ち主だった場合は既に場から除かれているため発動しない(R12と同じ扱い)。
+		// B06「深淵の封印」: アウラの持ち主から見た相手がB06を出していれば発動しない。
+		if (Opponent)
+		{
+			if (!AreUnitAbilitiesSuppressedByEnemy(Opponent) && HasBoardUnitWithEffect(FName(CGEffectId::OnAnyUnitDeathDamageFace1)))
+			{
+				Opponent->ApplyDamage(1);
+			}
+			if (!Opponent->AreUnitAbilitiesSuppressedByEnemy(this) && Opponent->HasBoardUnitWithEffect(FName(CGEffectId::OnAnyUnitDeathDamageFace1)))
+			{
+				ApplyDamage(1);
+			}
+		}
+
+		if (bFound && !AreUnitAbilitiesSuppressedByEnemy(Opponent))
 		{
 			if (const FUnitOnDeathEffectHandler* Handler = GetUnitOnDeathEffectHandlers().Find(Def.EffectId))
 			{
@@ -1488,7 +1620,7 @@ int32 ACGPlayerState::RemoveDeadUnitsAndGetDeathDrawCount(ACGPlayerState* Oppone
 			}
 		}
 
-		// 変貌(紫)のAlliesDiedSinceSummon条件用/怨嗟の炎術師(R12)の「自分の他の
+		// 変貌(紫)のAlliesDiedSinceSummon条件用/黒鉄の刀鍛冶(R12)の「自分の他の
 		// Unit死亡時」アウラ用: 残っている味方Unit全てを走査する。前者は死亡数に
 		// 応じた変貌進行度、後者は生き残っているR12自身が敵リーダーへダメージを
 		// 与えるトリガー(このユニット自身の死亡時ではなく「他のUnitが死んだとき」
@@ -1505,7 +1637,9 @@ int32 ACGPlayerState::RemoveDeadUnitsAndGetDeathDrawCount(ACGPlayerState* Oppone
 				++Survivor.TransformProgress;
 				ApplyTransformIfConditionMet(Survivor, Opponent, CGState);
 			}
-			if (SurvivorDef.EffectId == FName(CGEffectId::OnAllyDeathDamageFace1) && Opponent) // R12 怨嗟の炎術師
+			// B06「深淵の封印」: 相手がB06を出していればR12のアウラも発動しない。
+			if (SurvivorDef.EffectId == FName(CGEffectId::OnAllyDeathDamageFace1) && Opponent
+				&& !AreUnitAbilitiesSuppressedByEnemy(Opponent)) // R12 黒鉄の刀鍛冶
 			{
 				Opponent->ApplyDamage(SurvivorDef.EffectValue);
 			}
@@ -1522,9 +1656,9 @@ bool ACGPlayerState::SealUnit(int32 UnitIndex, int32& OutSealedCost)
 		return false;
 	}
 
-	// 変貌済みでも、コストは変貌前のカードのもので算出する(封印されたカードは
+	// 変貌済みでも、コストは変貌前のカードのもので算出する(断罪されたカードは
 	// 二度と使えなくなるため、どちらの見た目で計算しても実質的な差は無いが、
-	// 「元のカードを封印した」という扱いに揃える。docs/next-ruleset-design.md
+	// 「元のカードを断罪した」という扱いに揃える。docs/next-ruleset-design.md
 	// 「変貌の詳細ルール」)。
 	const FName EffectiveCardId = BoardUnits[UnitIndex].OriginalCardId.IsNone()
 		? BoardUnits[UnitIndex].CardId
@@ -1534,8 +1668,34 @@ bool ACGPlayerState::SealUnit(int32 UnitIndex, int32& OutSealedCost)
 	UCGCardDatabase::FindCard(EffectiveCardId, Def);
 	OutSealedCost = Def.Cost;
 
-	// 追放: 墓地に送らず、死亡時効果も発動させない(docs/game-rules-minimum.md「青」)。
+	// 追放: 墓地に送らず、死亡時効果も発動させない(FIN_BLUE専用、docs/keywords.md
+	// 「断罪(Condemn)」参照)。
 	BoardUnits.RemoveAt(UnitIndex);
+	return true;
+}
+
+bool ACGPlayerState::CondemnUnit(int32 UnitIndex, int32& OutCost)
+{
+	if (!BoardUnits.IsValidIndex(UnitIndex))
+	{
+		OutCost = 0;
+		return false;
+	}
+
+	// 変貌済みでも、コストは変貌前のカードのもので算出する(SealUnit()と揃える)。
+	const FName EffectiveCardId = BoardUnits[UnitIndex].OriginalCardId.IsNone()
+		? BoardUnits[UnitIndex].CardId
+		: BoardUnits[UnitIndex].OriginalCardId;
+
+	FCGCardDef Def;
+	UCGCardDatabase::FindCard(EffectiveCardId, Def);
+	OutCost = Def.Cost;
+
+	// 断罪: Hpを0にするだけで、実際の死亡処理(墓地送り・死亡時効果・死亡数
+	// カウント)は呼び出し側のResolveDeathsForBothSides()に任せる(通常の
+	// 戦闘・カード効果によるダメージ死と同じ扱いにするため。「ユニットを
+	// 死亡させるキーワード能力にしてほしい」というフィードバックへの対応)。
+	BoardUnits[UnitIndex].Hp = 0;
 	return true;
 }
 
@@ -1597,7 +1757,10 @@ namespace
 
 	bool Predicate_AllyUnitCountAtLeast(const ACGPlayerState& Self, const FCGBoardUnit&, int32 Value)
 	{
-		return Self.BoardUnits.Num() >= Value;
+		// 「ユニット数に自分は含まない」というフィードバックを受け、判定対象の
+		// このユニット自身(常に場に存在し、Self.BoardUnitsに含まれている)を
+		// 1体分差し引いた「自分以外の味方Unit数」で判定する。
+		return (Self.BoardUnits.Num() - 1) >= Value;
 	}
 
 	bool Predicate_LeaderHpAtMost(const ACGPlayerState& Self, const FCGBoardUnit&, int32 Value)
@@ -1641,7 +1804,7 @@ void ACGPlayerState::PerformTransform(FCGBoardUnit& Unit, const FCGCardDef& Def,
 	Unit.CardId = Def.TransformTargetCardId;
 	Unit.Atk = TargetDef.Atk + AtkDelta;
 	Unit.Hp = TargetDef.Hp + HpDelta;
-	Unit.bHasGuard = TargetDef.HasTag(TEXT("Guard")); // P12T「万物の頂点」等、変貌先だけが庇護を持つケース。
+	Unit.bHasGuard = TargetDef.HasTag(TEXT("Guard")); // P12T「王座に迫る者」等、変貌先だけが庇護を持つケース。
 	Unit.TransformProgress = 0;
 	++TransformsSucceededThisTurn;
 	++UnitsTransformedThisMatch; // フィニッシャー(紫): ユニットが5体変貌
@@ -1845,7 +2008,11 @@ void ACGPlayerState::CheckAndSpawnFinisher(ACGPlayerState* Opponent, ACGGameStat
 	const int32 SecondPlayerBonus = bWentSecond ? 2 : 0;
 	const FFinisherRule Rules[] = {
 		{ ECGColor::Red,    AlliesDiedThisMatch >= 10 - SecondPlayerBonus },
-		{ ECGColor::Orange, CardsPurchasedThisMatch >= 10 - SecondPlayerBonus },
+		// 「カードの効果でマーケットから購入された場合でも橙のフィニッシャーの
+		// カウントが増えるようにしてほしい」という対応で購入経路を増やしたのに
+		// 合わせ、「橙のフィニッシャーの条件を1減らしてほしい」というフィード
+		// バックを受け、しきい値を10→9にした。
+		{ ECGColor::Orange, CardsPurchasedThisMatch >= 9 - SecondPlayerBonus },
 		{ ECGColor::Blue,   CardsDrawnThisMatch >= 18 - SecondPlayerBonus },
 		{ ECGColor::Green,  BoardUnits.Num() >= 8 - SecondPlayerBonus },
 		{ ECGColor::Purple, UnitsTransformedThisMatch >= 5 - SecondPlayerBonus },
@@ -1882,46 +2049,75 @@ void ACGPlayerState::CheckAndSpawnFinisher(ACGPlayerState* Opponent, ACGGameStat
 
 void ACGPlayerState::NotifySealSucceeded(ACGPlayerState* Opponent)
 {
-	if (Opponent && HasBoardUnitWithEffect(FName(CGEffectId::OnSealDamageFace1))) // B04 幻惑の魔道士
+	// B06「深淵の封印」: 相手がB06を出していればB04/B08のアウラも発動しない。
+	if (AreUnitAbilitiesSuppressedByEnemy(Opponent))
+	{
+		return;
+	}
+	if (Opponent && HasBoardUnitWithEffect(FName(CGEffectId::OnSealDamageFace1))) // B04 頁繰りの魔道士
 	{
 		Opponent->ApplyDamage(1);
 	}
-	if (HasBoardUnitWithEffect(FName(CGEffectId::OnSealDraw1))) // B08 霧の壁
+	if (HasBoardUnitWithEffect(FName(CGEffectId::OnSealDraw1))) // B08 万年七年生
 	{
 		DrawCard();
 	}
 }
 
-void ACGPlayerState::ApplyOnTurnStartAuraEffects(ACGPlayerState* Opponent)
+void ACGPlayerState::ApplyOnTurnStartAuraEffects(ACGPlayerState* Opponent, ACGGameState* CGState)
 {
-	for (const FCGBoardUnit& Unit : BoardUnits)
+	// B06「深淵の封印」: 相手がB06を出していれば、ターン開始時アウラ(B05/O08/B14等)は
+	// いずれも発動しない。ただし色パッシブ(下記の緑コイン+1)はUnitの能力では
+	// ないため、このループだけを抑制し関数全体は抜けない。
+	if (!AreUnitAbilitiesSuppressedByEnemy(Opponent))
 	{
-		FCGCardDef Def;
-		if (!UCGCardDatabase::FindCard(Unit.CardId, Def))
+		for (const FCGBoardUnit& Unit : BoardUnits)
 		{
-			continue;
-		}
-		if (Def.EffectId == FName(CGEffectId::OnTurnStartDraw)) // B05 知識の番人
-		{
-			DrawCard();
-		}
-		else if (Def.EffectId == FName(CGEffectId::OnTurnStartGrantPurchaseMana)) // O08 先読みの相場師
-		{
-			PurchaseMana += Def.EffectValue;
-		}
-		else if (Def.EffectId == FName(CGEffectId::OnTurnStartSealHighestCostEnemy) && Opponent) // B14 終焉の裁定者
-		{
-			// ナーフ: 無条件だと毎ターン相手の最高コストUnitを無料で封印し続け
-			// られて強すぎたため、コスト上限(Def.EffectValue)を設けている
-			// (docs/game-rules-minimum.md「青」、docs/next-ruleset-simulation-v1.md)。
-			// 封印自体は青パッシブの発動条件(2回目のドロー)とは無関係になった
-			// ため、ここではパッシブを呼ばない。B04のOnSealDamageFace1アウラは
-			// 封印元(=この側)が持っていれば発動するため、成功時に通知する。
-			const int32 TargetIndex = FindHighestCostBoardUnitIndex(*Opponent, Def.EffectValue);
-			int32 SealedCost = 0;
-			if (Opponent->SealUnit(TargetIndex, SealedCost))
+			FCGCardDef Def;
+			if (!UCGCardDatabase::FindCard(Unit.CardId, Def))
 			{
-				NotifySealSucceeded(Opponent);
+				continue;
+			}
+			if (Def.EffectId == FName(CGEffectId::OnTurnStartDraw)) // B05 荒野の記録係
+			{
+				DrawCard();
+			}
+			else if (Def.EffectId == FName(CGEffectId::OnTurnStartGrantPurchaseMana)) // O08 風の航路士
+			{
+				PurchaseMana += Def.EffectValue;
+			}
+			else if (Def.EffectId == FName(CGEffectId::OnTurnStartSealHighestCostEnemy) && Opponent) // B14 終焉の裁定者
+			{
+				// ナーフ: 無条件だと毎ターン相手の最高コストUnitを無料で断罪し続け
+				// られて強すぎたため、コスト上限(Def.EffectValue)を設けている
+				// (docs/game-rules-minimum.md「青」、docs/next-ruleset-simulation-v1.md)。
+				// 断罪(旧「封印」)自体は青パッシブの発動条件(2回目のドロー)とは
+				// 無関係になったため、ここではパッシブを呼ばない。B04のOnSealDamageFace1
+				// アウラは断罪元(=この側)が持っていれば発動するため、成功時に通知する。
+				// 断罪は通常の死亡処理を経由するため、ここで死亡処理も確定させる
+				// (docs/keywords.md「断罪(Condemn)」参照)。
+				const int32 TargetIndex = FindHighestCostBoardUnitIndex(*Opponent, Def.EffectValue);
+				int32 CondemnedCost = 0;
+				if (Opponent->CondemnUnit(TargetIndex, CondemnedCost))
+				{
+					NotifySealSucceeded(Opponent);
+
+					// 断罪された側(Opponent)の死亡時ドローを先に反映してから、
+					// 巻き添え(例: 相手のR01のような「死亡時、敵のランダムなUnit1体に
+					// ダメージ」)で自分の場にも死亡が生まれていないか確認する
+					// (ACGGameMode::ResolveDeathsForBothSidesと同じ考え方だが、
+					// ACGPlayerStateからは呼べないためここで同等の処理を行う)。
+					const int32 OpponentDeathDraws = Opponent->RemoveDeadUnitsAndGetDeathDrawCount(this, CGState);
+					for (int32 i = 0; i < OpponentDeathDraws; ++i)
+					{
+						Opponent->DrawCard();
+					}
+					const int32 SelfDeathDraws = RemoveDeadUnitsAndGetDeathDrawCount(Opponent, CGState);
+					for (int32 i = 0; i < SelfDeathDraws; ++i)
+					{
+						DrawCard();
+					}
+				}
 			}
 		}
 	}
@@ -1962,6 +2158,11 @@ bool ACGPlayerState::HasBoardUnitWithEffect(FName EffectId) const
 		}
 	}
 	return false;
+}
+
+bool ACGPlayerState::AreUnitAbilitiesSuppressedByEnemy(const ACGPlayerState* Enemy) const
+{
+	return Enemy && Enemy->HasBoardUnitWithEffect(FName(CGEffectId::SuppressEnemyUnitAbilities));
 }
 
 void ACGPlayerState::RefreshManaForNewTurn()
